@@ -25325,7 +25325,7 @@ async function fetchMovieBoxStreams(season = null, episode = null) {
                 console.log('[AIOStreams] Fetching from:', apiUrl);
 
                 const response = await fetch(apiUrl);
-                if (!response.ok) throw new Error(`AIOStreams API error: ${response.statusText}`);
+                if (!response.ok) throw new Error(`Please configure AIOStreams in the settings`);
                 
                 const data = await response.json();
                 
