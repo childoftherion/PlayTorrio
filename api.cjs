@@ -4658,7 +4658,7 @@ app.get('/api/proxy-image', async (req, res) => {
   }
 });
 
-// Get pages from a chapter (streams valid pages in real-time)
+// Get pages from a chapter
 app.get('/api/chapter/pages', async (req, res) => {
   try {
     const chapterId = req.query.chapterId;
@@ -4719,13 +4719,9 @@ app.get('/api/chapter/pages', async (req, res) => {
       });
     }
     
-    // Set up streaming response
-    res.setHeader('Content-Type', 'application/x-ndjson');
-    res.setHeader('Transfer-Encoding', 'chunked');
-    
     let consecutiveFailures = 0;
     const maxFailures = 3;
-    let pageCount = 0;
+    let pages = [];
     let i = 1;
     
     // Keep checking pages until 3 consecutive failures (no page limit)
@@ -4748,31 +4744,27 @@ app.get('/api/chapter/pages', async (req, res) => {
       }
       
       if (pageExists) {
-        pageCount++;
-        // Send valid page immediately
-        res.write(JSON.stringify({
-          number: i,
-          url: pageUrl,
-          type: 'page'
-        }) + '\n');
+        pages.push(pageUrl);
         consecutiveFailures = 0;
       } else {
         consecutiveFailures++;
         
         // If we've had 3 consecutive failures, stop looking
         if (consecutiveFailures >= maxFailures) {
-          console.log(`[MANGA] Chapter ${chapterId}: Found ${pageCount} pages, stopped after ${maxFailures} consecutive failures`);
-          res.write(JSON.stringify({
-            type: 'complete',
-            totalPages: pageCount
-          }) + '\n');
-          res.end();
-          return;
+          console.log(`[MANGA] Chapter ${chapterId}: Found ${pages.length} pages, stopped after ${maxFailures} consecutive failures`);
+          break; // Exit loop
         }
       }
       
       i++;
     }
+
+    res.json({
+        success: true,
+        pages: pages,
+        total_pages: pages.length
+    });
+
   } catch (error) {
     console.error('[MANGA] Pages error:', error.message);
     res.status(500).json({
@@ -5017,6 +5009,751 @@ app.get("/proxy", async (req, res) => {
     } catch (err) {
         console.error("Proxy error:", err.message);
         res.status(500).json({ error: "Proxy failed" });
+    }
+});
+
+
+// ============================================================================
+// COMIX SERVICE
+// ============================================================================
+
+const COMIX_API_URL = 'http://localhost:6987/api';
+
+// Genre mapping
+const COMIX_GENRES = {
+  6: 'Action',
+  87264: 'Adult',
+  7: 'Adventure',
+  8: 'Boys Love',
+  9: 'Comedy',
+  10: 'Crime',
+  11: 'Drama',
+  87265: 'Ecchi',
+  12: 'Fantasy',
+  13: 'Girls Love',
+  87266: 'Hentai',
+  14: 'Historical',
+  15: 'Horror',
+  16: 'Isekai',
+  17: 'Magical Girls',
+  87267: 'Mature',
+  18: 'Mecha',
+  19: 'Medical',
+  20: 'Mystery',
+  21: 'Philosophical',
+  22: 'Psychological',
+  23: 'Romance',
+  24: 'Sci-Fi',
+  25: 'Slice of Life',
+  87268: 'Smut',
+  26: 'Sports',
+  27: 'Superhero',
+  28: 'Thriller',
+  29: 'Tragedy',
+  30: 'Wuxia'
+};
+
+app.get('/api/comix/genres', (req, res) => {
+  res.json({
+    status: 'success',
+    genres: COMIX_GENRES
+  });
+});
+
+app.get('/api/comix/manga/all', async (req, res) => {
+    try {
+        const page = req.query.page || 1;
+        const url = `https://comix.to/api/v2/manga?order[relevance]=desc&genres_mode=or&limit=28&page=${page}`;
+
+        const response = await axios.get(url);
+        const mangaList = response.data.result.items.map(manga => ({
+            name: manga.title,
+            poster: manga.poster.large,
+            url: `https://comix.to/title/${manga.hash_id}-${manga.slug}`,
+            manga_id: manga.manga_id,
+            hash_id: manga.hash_id
+        }));
+
+        res.json({
+            status: 'success',
+            count: mangaList.length,
+            page: parseInt(page),
+            data: mangaList
+        });
+    } catch (error) {
+        res.status(500).json({
+            status: 'error',
+            message: error.message
+        });
+    }
+});
+
+app.get('/api/comix/manga/genre/:genreId', async (req, res) => {
+    try {
+        const {
+            genreId
+        } = req.params;
+        const page = req.query.page || 1;
+        const url = `https://comix.to/api/v2/manga?order[views_30d]=desc&genres[]=${genreId}&genres_mode=or&limit=28&page=${page}`;
+
+        const response = await axios.get(url);
+        const mangaList = response.data.result.items.map(manga => ({
+            name: manga.title,
+            poster: manga.poster.large,
+            url: `https://comix.to/title/${manga.hash_id}-${manga.slug}`,
+            manga_id: manga.manga_id,
+            hash_id: manga.hash_id
+        }));
+
+        res.json({
+            status: 'success',
+            genre: COMIX_GENRES[genreId] || 'Unknown',
+            count: mangaList.length,
+            page: parseInt(page),
+            data: mangaList
+        });
+    } catch (error) {
+        res.status(500).json({
+            status: 'error',
+            message: error.message
+        });
+    }
+});
+
+app.get('/api/comix/manga/search/:query', async (req, res) => {
+    try {
+        const {
+            query
+        } = req.params;
+        const page = req.query.page || 1;
+        const encodedQuery = encodeURIComponent(query);
+        const url = `https://comix.to/api/v2/manga?order[relevance]=desc&keyword=${encodedQuery}&genres_mode=or&limit=28&page=${page}`;
+
+        const response = await axios.get(url);
+        const mangaList = response.data.result.items.map(manga => ({
+            name: manga.title,
+            poster: manga.poster.large,
+            url: `https://comix.to/title/${manga.hash_id}-${manga.slug}`,
+            manga_id: manga.manga_id,
+            hash_id: manga.hash_id
+        }));
+
+        res.json({
+            status: 'success',
+            query: query,
+            count: mangaList.length,
+            page: parseInt(page),
+            data: mangaList
+        });
+    } catch (error) {
+        res.status(500).json({
+            status: 'error',
+            message: error.message
+        });
+    }
+});
+
+app.get('/api/comix/chapters/:hashId', async (req, res) => {
+    try {
+        const {
+            hashId
+        } = req.params;
+        let allChapters = [];
+        let page = 1;
+        let hasMore = true;
+
+        while (hasMore) {
+            const url = `https://comix.to/api/v2/manga/${hashId}/chapters?limit=50&page=${page}&order[number]=desc`;
+            const response = await axios.get(url);
+
+            if (!response.data.result || !response.data.result.items || response.data.result.items.length === 0) {
+                hasMore = false;
+            } else {
+                allChapters = allChapters.concat(response.data.result.items);
+                page++;
+                // Add small delay to avoid rate limiting
+                await new Promise(resolve => setTimeout(resolve, 100));
+            }
+        }
+
+        res.json({
+            status: 'success',
+            hash_id: hashId,
+            total_chapters: allChapters.length,
+            data: allChapters
+        });
+    } catch (error) {
+        res.status(500).json({
+            status: 'error',
+            message: error.message
+        });
+    }
+});
+
+app.get('/api/comix/manga/chapters/:hashId/:chapterId', async (req, res) => {
+    try {
+        const {
+            hashId,
+            chapterId
+        } = req.params;
+        console.log(`\n=== Getting chapter pages ===`);
+        console.log(`Hash ID: ${hashId}`);
+        console.log(`Chapter ID: ${chapterId}`);
+
+        // Get manga info
+        const mangaInfoUrl = `https://comix.to/api/v2/manga/${hashId}`;
+        const mangaResponse = await axios.get(mangaInfoUrl);
+        const manga = mangaResponse.data.result;
+        const slug = manga.slug;
+        const mangaId = manga.manga_id;
+
+        // Get chapter info
+        let allChapters = [];
+        let page = 1;
+        let hasMore = true;
+
+        while (hasMore) {
+            const chaptersUrl = `https://comix.to/api/v2/manga/${hashId}/chapters?limit=50&page=${page}&order[number]=desc`;
+            const chaptersResponse = await axios.get(chaptersUrl);
+
+            if (!chaptersResponse.data.result || !chaptersResponse.data.result.items || chaptersResponse.data.result.items.length === 0) {
+                hasMore = false;
+            } else {
+                allChapters = allChapters.concat(chaptersResponse.data.result.items);
+                page++;
+                // Add small delay to avoid rate limiting
+                await new Promise(resolve => setTimeout(resolve, 100));
+            }
+        }
+
+        let chapter = allChapters.find(ch => ch.chapter_id == chapterId);
+
+        if (!chapter) {
+            return res.status(404).json({
+                status: 'error',
+                message: 'Chapter not found'
+            });
+        }
+
+        // Construct chapter URL
+        const chapterUrl = `https://comix.to/title/${hashId}-${slug}/${chapterId}-chapter-${chapter.number}`;
+        console.log(`Fetching chapter page from: ${chapterUrl}`);
+
+        // Fetch the HTML
+        const htmlResponse = await axios.get(chapterUrl);
+        const html = htmlResponse.data;
+
+        // Extract image URLs from the embedded Next.js data
+        // Look for the self.__next_f data that contains the images
+        const imageUrls = [];
+
+        // Method 1: Extract from script tags containing self.__next_f
+        const scriptMatches = html.match(/self\.__next_f\.push\(\[1,"([^"]+)"\]\)/g);
+
+        if (scriptMatches) {
+            scriptMatches.forEach(match => {
+                // Extract the JSON string and decode it
+                const jsonMatch = match.match(/self\.__next_f\.push\(\[1,"([^"]+)"\]\)/);
+                if (jsonMatch && jsonMatch[1]) {
+                    const decoded = jsonMatch[1]
+                        .replace(/\\"/g, '"')
+                        .replace(/\\n/g, '')
+                        .replace(/\\\\/g, '\\');
+
+                    // Look for image URLs in the decoded content
+                    const imgMatches = decoded.match(/https:\/\/[^"]+\.webp/g);
+                    if (imgMatches) {
+                        imgMatches.forEach(url => {
+                            if (!imageUrls.includes(url)) {
+                                imageUrls.push(url);
+                            }
+                        });
+                    }
+                }
+            });
+        }
+
+        // Method 2: Fallback - look for URLs in any script tag
+        if (imageUrls.length === 0) {
+            const $ = cheerio.load(html);
+            $('script').each((i, elem) => {
+                const content = $(elem).html();
+                if (content) {
+                    const matches = content.match(/https:\/\/[^"'\s]+\.webp/g);
+                    if (matches) {
+                        matches.forEach(url => {
+                            if (!imageUrls.includes(url)) {
+                                imageUrls.push(url);
+                            }
+                        });
+                    }
+                }
+            });
+        }
+
+        console.log(`Total images found: ${imageUrls.length}`);
+
+        res.json({
+            status: 'success',
+            manga_id: mangaId,
+            hash_id: hashId,
+            chapter_id: chapterId,
+            chapter_number: chapter.number,
+            chapter_name: chapter.name || `Chapter ${chapter.number}`,
+            chapter_url: chapterUrl,
+            total_pages: imageUrls.length,
+            pages: imageUrls
+        });
+
+    } catch (error) {
+        console.error(`ERROR:`, error.message);
+        res.status(500).json({
+            status: 'error',
+            message: error.message
+        });
+    }
+});
+
+
+app.get("/comics/all", async (req, res) => {
+    try {
+        const page = Number(req.query.page) || 1;
+        const pageUrl = `https://readcomicsonline.ru/latest-release?page=${page}`;
+
+        const { data } = await axios.get(pageUrl, {
+            headers: { "User-Agent": "Mozilla/5.0" }
+        });
+
+        const $ = cheerio.load(data);
+        const results = [];
+
+        const mangaItems = $(".mangalist .manga-item");
+
+        for (const item of mangaItems) {
+            const el = $(item);
+
+            const anchor = el.find("h3.manga-heading a");
+            const name = anchor.text().trim();
+            const comicUrl = anchor.attr("href");
+
+            if (!comicUrl) continue;
+
+            const slug = comicUrl.split("/comic/")[1];
+
+            // RAW URL — no proxy
+            const poster_url = `https://readcomicsonline.ru/uploads/manga/${slug}/cover/cover_250x350.jpg`;
+
+            results.push({ name, url: comicUrl, poster_url });
+        }
+
+        res.json({
+            success: true,
+            page,
+            total: results.length,
+            results
+        });
+
+    } catch (error) {
+        console.error("ALL ERROR:", error.message);
+        res.status(500).json({
+            success: false,
+            error: "Failed to scrape comics"
+        });
+    }
+});
+
+
+app.get("/comics/search/:query", async (req, res) => {
+    try {
+        const query = req.params.query;
+        if (!query) {
+            return res.status(400).json({ success: false, error: "Missing search query" });
+        }
+
+        const encoded = encodeURIComponent(query);
+        const apiUrl = `https://readcomicsonline.ru/search?query=${encoded}`;
+
+        const { data } = await axios.get(apiUrl, {
+            headers: { "User-Agent": "Mozilla/5.0" }
+        });
+
+        const suggestions = data.suggestions || [];
+
+        const results = suggestions.map(item => {
+            const slug = item.data;
+            const name = item.value;
+
+            return {
+                name,
+                url: `https://readcomicsonline.ru/comic/${slug}`,
+                poster_url: `https://readcomicsonline.ru/uploads/manga/${slug}/cover/cover_250x350.jpg`
+            };
+        });
+
+        res.json({ success: true, total: results.length, results });
+
+    } catch (error) {
+        console.error("SEARCH ERROR:", error.message);
+        res.status(500).json({ success: false, error: "Search failed" });
+    }
+});
+
+
+/**
+ * /comics/genres/:genreKey
+ * Supports:
+ *  - /comics/genres/34         (ID)
+ *  - /comics/genres/Marvel%20Comics  (Name)
+ * Supports ?page=<number> for infinite scroll
+ */
+app.get("/comics/genres/:genreKey", async (req, res) => {
+    try {
+
+        // FULL GENRE MAP (100% COMPLETE)
+        const genreMap = {
+            "One Shots & TPBs": 17,
+            "Marvel Comics": 34,
+            "Boom Studios": 35,
+            "Dynamite": 36,
+            "Rebellion": 37,
+            "Dark Horse": 38,
+            "IDW": 39,
+            "Archie": 40,
+            "Graphic India": 41,
+            "Darby Pop": 42,
+            "Oni Press": 43,
+            "Icon Comics": 44,
+            "United Plankton": 45,
+            "Udon": 46,
+            "Image Comics": 47,
+            "Valiant": 48,
+            "Vertigo": 49,
+            "Devils Due": 50,
+            "Aftershock Comics": 51,
+            "Antartic Press": 52,
+            "Action Lab": 53,
+            "American Mythology": 54,
+            "Zenescope": 55,
+            "Top Cow": 56,
+            "Hermes Press": 57,
+            "451": 58,
+            "Black Mask": 59,
+            "Chapterhouse Comics": 60,
+            "Red 5": 61,
+            "Heavy Metal": 62,
+            "Bongo": 63,
+            "Top Shelf": 64,
+            "Bubble": 65,
+            "Boundless": 66,
+            "Avatar Press": 67,
+            "Space Goat Productions": 68,
+            "BroadSword Comics": 69,
+            "AAM-Markosia": 70,
+            "Fantagraphics": 71,
+            "Aspen": 72,
+            "American Gothic Press": 73,
+            "Vault": 74,
+            "215 Ink": 75,
+            "Abstract Studio": 76,
+            "Albatross": 77,
+            "ARH Comix": 78,
+            "Legendary Comics": 79,
+            "Monkeybrain": 80,
+            "Joe Books": 81,
+            "MAD": 82,
+            "Comics Experience": 83,
+            "Alterna Comics": 84,
+            "Lion Forge": 85,
+            "Benitez": 86,
+            "Storm King": 87,
+            "Sucker": 88,
+            "Amryl Entertainment": 89,
+            "Ahoy Comics": 90,
+            "Mad Cave": 91,
+            "Coffin Comics": 92,
+            "Magnetic Press": 93,
+            "Ablaze": 94,
+            "Europe Comics": 95,
+            "Humanoids": 96,
+            "TKO": 97,
+            "Soleil": 98,
+            "SAF Comics": 99,
+            "Scholastic": 100,
+            "AWA Studios": 101,
+            "Stranger Comics": 102,
+            "Inverse": 103,
+            "Virus": 104,
+            "Black Panel Press": 105,
+            "Scout Comics": 106,
+            "Source Point Press": 107,
+            "First Second": 108,
+            "DSTLRY": 109,
+            "Yen Press": 110,
+            "Alien Books": 111
+        };
+
+        const genreKey = req.params.genreKey;
+        const page = Number(req.query.page) || 1;
+
+        // SUPPORT BOTH: numeric ID or genre name
+        let categoryId = Number(genreKey);
+
+        if (isNaN(categoryId)) {
+            const decoded = decodeURIComponent(genreKey);
+            categoryId = genreMap[decoded];
+        }
+
+        if (!categoryId) {
+            return res.status(400).json({
+                success: false,
+                error: "Unknown genre (use ID or exact name)"
+            });
+        }
+
+        // STEP 1 — Fetch advanced-search to get CSRF token + cookie
+        const tokenResp = await axios.get("https://readcomicsonline.ru/advanced-search", {
+            headers: {
+                "User-Agent": "Mozilla/5.0",
+                "Accept": "text/html"
+            }
+        });
+
+        const cookies = tokenResp.headers["set-cookie"] || [];
+        const cookieHeader = cookies.map(c => c.split(";")[0]).join("; ");
+
+        const htmlPage = tokenResp.data;
+        const $page = cheerio.load(htmlPage);
+
+        let token = $page("input[name='_token']").attr("value");
+
+        // fallback: scrape inline script
+        if (!token) {
+            const match = htmlPage.match(/['_"]_token['_"]\s*[:=]\s*['"]([^'"]+)['"]/);
+            if (match) token = match[1];
+        }
+
+        if (!token) {
+            return res.status(500).json({
+                success: false,
+                error: "Failed to extract CSRF token"
+            });
+        }
+
+        // STEP 2 — Prepare encoded parameters
+        const encodedParams = `categories%255B%255D%3D${categoryId}%26release%3D%26author%3D`;
+
+        const formBody =
+            `params=${encodedParams}` +
+            `&page=${page}` +
+            `&_token=${encodeURIComponent(token)}`;
+
+        // STEP 3 — POST request to advSearchFilter
+        const response = await axios.post(
+            "https://readcomicsonline.ru/advSearchFilter",
+            formBody,
+            {
+                headers: {
+                    "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+                    "X-Requested-With": "XMLHttpRequest",
+                    "Origin": "https://readcomicsonline.ru",
+                    "Referer": "https://readcomicsonline.ru/advanced-search",
+                    "Cookie": cookieHeader,
+                    "User-Agent": "Mozilla/5.0",
+                    "Accept": "*/*"
+                }
+            }
+        );
+
+        const resultsHTML = response.data;
+        const $ = cheerio.load(resultsHTML);
+
+        const results = [];
+
+        // PARSE RESULTS
+        $(".media").each((_, el) => {
+            const name = $(el).find(".media-heading a").text().trim();
+            const url = $(el).find(".media-left a").attr("href");
+
+            if (!url) return;
+
+            const slug = url.split("/comic/")[1];
+
+            // RAW IMAGE URL — NO PROXY
+            const poster_url =
+                `https://readcomicsonline.ru/uploads/manga/${slug}/cover/cover_250x350.jpg`;
+
+            results.push({ name, url, poster_url });
+        });
+
+        return res.json({
+            success: true,
+            genre: genreKey,
+            page,
+            total: results.length,
+            results
+        });
+
+    } catch (err) {
+        console.log("GENRE ERROR:", err.message);
+        return res.status(500).json({
+            success: false,
+            error: "Genre request failed"
+        });
+    }
+});
+
+
+/**
+ * /comics/chapters/:slug
+ * Get all chapter links for a comic
+ */
+app.get("/comics/chapters/:slug", async (req, res) => {
+    try {
+        const slug = req.params.slug;
+
+        if (!slug) {
+            return res.status(400).json({
+                success: false,
+                error: "Missing slug"
+            });
+        }
+
+        const url = `https://readcomicsonline.ru/comic/${slug}`;
+
+        const { data } = await axios.get(url, {
+            headers: {
+                "User-Agent": "Mozilla/5.0"
+            }
+        });
+
+        const $ = cheerio.load(data);
+        const results = [];
+
+        $("li .chapter-title-rtl a").each((_, el) => {
+            const name = $(el).text().trim();
+            const chapterUrl = $(el).attr("href");
+
+            if (!chapterUrl) return;
+
+            // Extract the chapter number from the URL
+            // Example: /comic/slug/5 → "5"
+            // Example: /comic/slug/chapter-12 → "chapter-12"
+            const parts = chapterUrl.split("/");
+            const chapter = parts[parts.length - 1]; 
+
+            results.push({
+                name,
+                url: chapterUrl,
+                chapter  // <-- FIX: frontend now gets proper chapter value
+            });
+        });
+
+        res.json({
+            success: true,
+            total: results.length,
+            chapters: results
+        });
+
+    } catch (err) {
+        console.log("CHAPTERS ERROR:", err.message);
+        res.status(500).json({
+            success: false,
+            error: "Failed to fetch chapters"
+        });
+    }
+});
+
+
+app.get("/comics/pages/:slug/:chapter", async (req, res) => {
+    try {
+        const { slug, chapter } = req.params;
+
+        const url = `https://readcomicsonline.ru/comic/${slug}/${chapter}`;
+
+        const { data } = await axios.get(url, {
+            headers: { "User-Agent": "Mozilla/5.0" }
+        });
+
+        const $ = cheerio.load(data);
+
+        const results = [];
+        let pageNumber = 1;
+
+        $("#all img").each((_, el) => {
+            let imgUrl = $(el).attr("data-src");
+            if (!imgUrl) return;
+
+            imgUrl = imgUrl.trim();
+
+            results.push({
+                page: pageNumber++,
+                url: imgUrl // RAW URL ONLY
+            });
+        });
+
+        res.json({ success: true, chapter, total: results.length, pages: results });
+
+    } catch (err) {
+        console.log("PAGES ERROR:", err.message);
+        res.status(500).json({ success: false, error: "Failed to fetch pages" });
+    }
+});
+
+
+app.get("/proxy", async (req, res) => {
+    try {
+        const target = req.query.url;
+        if (!target) return res.status(400).send("Missing url");
+
+        const response = await axios.get(target, {
+            responseType: "arraybuffer",
+            headers: {
+                "Referer": "https://readcomicsonline.ru/",
+                "User-Agent": "Mozilla/5.0",
+                "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+                "Accept-Language": "en-US,en;q=0.9",
+                "Connection": "keep-alive"
+            }
+        });
+
+        res.setHeader("Content-Type", response.headers["content-type"]);
+        res.send(response.data);
+
+    } catch (err) {
+        console.log("PROXY ERROR:", err.message);
+        res.status(500).send("Proxy error");
+    }
+});
+
+
+app.get("/comics-proxy", async (req, res) => {
+    try {
+        let target = req.query.url;
+        if (!target) return res.status(400).send("Missing url");
+
+        // ReadComicOnline blocks requests unless
+        // Referer + User-Agent are set correctly
+        const response = await axios.get(target, {
+            responseType: "arraybuffer",
+            headers: {
+                "Referer": "https://readcomicsonline.ru/",
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome Safari",
+                "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+                "Accept-Language": "en-US,en;q=0.9"
+            },
+            validateStatus: () => true
+        });
+
+        if (!response.data) {
+            return res.status(500).json({ error: "Empty response" });
+        }
+
+        res.setHeader("Content-Type", response.headers["content-type"] || "image/jpeg");
+        res.send(response.data);
+
+    } catch (err) {
+        console.log("COMICS PROXY ERROR:", err);
+        res.status(500).json({ error: "Comics Proxy failed" });
     }
 });
 
