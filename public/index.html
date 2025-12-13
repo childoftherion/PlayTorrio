@@ -8235,7 +8235,8 @@
             <div class="nav-item" data-page="music">
                 <i class="fas fa-music" style="color: #ec4899;"></i>
                 <span>Music</span>
-                <span class="nav-badge" style="background: linear-gradient(135deg, #ec4899, #db2777);">HiFi</span>
+                <!-- Updated badge to reflect new music provider -->
+                <span class="nav-badge" style="background: linear-gradient(135deg, #ec4899, #db2777);">Music</span>
             </div>
             <div class="nav-item" data-page="games-downloader">
                 <i class="fas fa-download" style="color: #8b5cf6;"></i>
@@ -8500,7 +8501,8 @@
                 <h2 class="section-title">
                     <i class="fas fa-music" style="color: #ec4899;"></i> <span>Music</span>
                 </h2>
-                <p class="page-subtitle">Search and stream high-quality music</p>
+                <!-- Updated subtitle to reference Spotify-based streaming -->
+                <p class="page-subtitle">Search and stream music powered by Spotify</p>
             </div>
             <div class="page-actions">
                 <button class="action-btn" id="music-my-btn" title="Open My Music">
@@ -8552,7 +8554,7 @@
                 <div class="books-loading-spinner">
                     <i class="fas fa-spinner fa-spin"></i>
                 </div>
-                <p>Searching HiFi...</p>
+                <p>Searching music...</p>
             </div>
 
             <!-- Empty State -->
@@ -8560,7 +8562,7 @@
                 <div class="books-empty-icon">
                     <i class="fas fa-music"></i>
                 </div>
-                <h3>Welcome to HiFi Music</h3>
+                <h3>Welcome to Music</h3>
                 <p>Search for any song, artist, or album to get started.</p>
             </div>
 
@@ -19085,6 +19087,10 @@ Your browser does not support the video tag.
             function tidalCoverUrl(cover) {
                 if (!cover) return '';
                 try {
+                    // If a full URL is provided (e.g. from Spotify), return it directly
+                    if (typeof cover === 'string' && cover.startsWith('http')) {
+                        return cover;
+                    }
                     return `https://resources.tidal.com/images/${cover.replace(/-/g, '/')}/320x320.jpg`;
                 } catch (_) {
                     return '';
@@ -19096,6 +19102,22 @@ Your browser does not support the video tag.
                 const m = Math.floor(sec / 60);
                 const s = Math.floor(sec % 60).toString().padStart(2, '0');
                 return `${m}:${s}`;
+            }
+
+            // Helper to call our own API endpoints instead of HiFi/Tidal. Wraps fetch and JSON parsing.
+            async function musicApiFetch(path) {
+                try {
+                    // Ensure the path starts with /api
+                    const url = path.startsWith('/api/') ? path : `/api${path}`;
+                    const resp = await fetch(url);
+                    if (!resp.ok) {
+                        throw new Error(`API request failed with status ${resp.status}`);
+                    }
+                    return await resp.json();
+                } catch (err) {
+                    console.error('[MUSIC] API error:', err);
+                    throw err;
+                }
             }
 
             async function searchMusic(query) {
@@ -19110,10 +19132,10 @@ Your browser does not support the video tag.
                 musicLoading.style.display = 'block';
 
                 try {
-                    const data = await musicFetchJson(`/search/?s=${encodeURIComponent(q)}`);
+                    // Use our API to search for tracks via Spotify
+                    const resp = await musicApiFetch(`/api/search?q=${encodeURIComponent(q)}&type=track&limit=30`);
                     musicLoading.style.display = 'none';
-                    const items = Array.isArray(data?.items) ? data.items : [];
-
+                    const items = Array.isArray(resp?.results) ? resp.results : [];
                     if (!items.length) {
                         musicResults.style.display = 'none';
                         musicEmpty.style.display = 'block';
@@ -19125,13 +19147,27 @@ Your browser does not support the video tag.
                         showNotification('No music found for your search', 'info');
                         return;
                     }
-
-                    // Prefer tracks; if mixed, filter to tracks when possible
-                    const tracks = items.filter(it => (it.type || it.itemType || '').toString().toLowerCase() === 'track' || it.audioQuality || it.artist);
-                    const results = tracks.length ? tracks : items;
-                    musicResultsCache = results;
-                    displayMusicResults(results, q);
-                    showNotification(`Found ${results.length} items`, 'success');
+                    // Normalize results into the shape expected by displayMusicResults
+                    const normalized = items.map(it => {
+                        const id = it.id;
+                        const title = it.title || it.name || 'Unknown Title';
+                        const artistName = it.artists || 'Unknown Artist';
+                        const albumArt = it.albumArt || '';
+                        return {
+                            id: id,
+                            title: title,
+                            trackId: id,
+                            artist: artistName,
+                            artists: artistName,
+                            album: { cover: albumArt },
+                            cover: albumArt,
+                            albumCover: albumArt,
+                            duration: it.duration
+                        };
+                    });
+                    musicResultsCache = normalized;
+                    displayMusicResults(normalized, q);
+                    showNotification(`Found ${normalized.length} item${normalized.length !== 1 ? 's' : ''}`, 'success');
                 } catch (e) {
                     console.error('[MUSIC] Search error', e);
                     musicLoading.style.display = 'none';
@@ -19320,8 +19356,9 @@ Your browser does not support the video tag.
                 albumsGrid.innerHTML = '';
                 albumsCount.textContent = 'Searching…';
                 try {
-                    const data = await musicFetchJson(`/search/?al=${encodeURIComponent(query.trim())}`);
-                    const albums = (data && data.albums && Array.isArray(data.albums.items)) ? data.albums.items : [];
+                    // Use our API to search for albums via Spotify
+                    const resp = await musicApiFetch(`/api/search?q=${encodeURIComponent(query.trim())}&type=album&limit=20`);
+                    const albums = Array.isArray(resp?.results) ? resp.results : [];
                     renderAlbumResults(albums);
                 } catch (e) {
                     console.error('[MUSIC] Album search error', e);
@@ -19337,29 +19374,33 @@ Your browser does not support the video tag.
                     return;
                 }
                 albums.forEach(a => {
-                    const artistName = (a.artists && a.artists[0]?.name) ? a.artists[0].name : 'Unknown Artist';
-                    const coverUrl = a.cover ? tidalCoverUrl(a.cover) : '';
+                    // Normalize album data for display. API returns { id, name, artists, albumArt, releaseDate, totalTracks }
+                    const artistName = a.artists || 'Unknown Artist';
+                    const coverUrl = a.albumArt || '';
+                    const title = a.name || a.title || 'Unknown Album';
+                    const totalTracks = a.totalTracks || a.numberOfTracks || 0;
+                    const releaseDate = a.releaseDate || '';
                     const card = document.createElement('div');
                     card.className = 'album-card';
                     const saved = getMyAlbums().some(x => String(x.id) === String(a.id));
                     card.innerHTML = `
-                        <img loading="lazy" class="album-cover" src="${coverUrl}" alt="${a.title}">
+                        <img loading="lazy" class="album-cover" src="${coverUrl}" alt="${title}">
                         <div class="album-body">
-                            <div class="album-title">${a.title}</div>
+                            <div class="album-title">${title}</div>
                             <div class="album-artist">${artistName}</div>
                             <div class="album-meta">
-                                <span>${a.type || 'ALBUM'}</span>
-                                <span>·</span>
-                                <span>${a.numberOfTracks || 0} tracks</span>
-                                ${a.releaseDate ? `<span>·</span><span>${a.releaseDate}</span>` : ''}
+                                <span>${totalTracks} tracks</span>
+                                ${releaseDate ? `<span>·</span><span>${releaseDate}</span>` : ''}
                             </div>
                             <div style="display:flex; gap:0.5rem;">
                                 <button class="album-open-btn"><i class="fas fa-folder-open"></i> Open</button>
                                 <button class="album-heart-btn ${saved ? 'added' : ''}" title="${saved ? 'In My Albums' : 'Save Album'}"><i class="fas fa-heart"></i></button>
                             </div>
                         </div>`;
-                    card.querySelector('.album-open-btn').addEventListener('click', () => openAlbum(a));
-                    card.querySelector('.album-heart-btn').addEventListener('click', () => saveAlbum(a, card.querySelector('.album-heart-btn')));
+                    // Attach album object with normalized fields for open/save operations
+                    const normalizedAlbum = { id: a.id, name: title, artists: artistName, albumArt: coverUrl, totalTracks: totalTracks, releaseDate: releaseDate };
+                    card.querySelector('.album-open-btn').addEventListener('click', () => openAlbum(normalizedAlbum));
+                    card.querySelector('.album-heart-btn').addEventListener('click', () => saveAlbum(normalizedAlbum, card.querySelector('.album-heart-btn')));
                     albumsGrid.appendChild(card);
                 });
             }
@@ -19373,49 +19414,32 @@ Your browser does not support the video tag.
                     albumTracksEl.innerHTML = '<div class="album-empty">Loading tracks…</div>';
                     currentAlbumTracks = []; // Clear previous album data
 
-                    const json = await musicFetchJson(`/album/?id=${encodeURIComponent(albumFromSearch.id)}`);
-
-                    // API shape per example: [ albumMeta, { limit, offset, totalNumberOfItems, items: [{ item: {track}, type: 'track' }, ...] } ]
-                    let albumMeta = null;
-                    let tracks = [];
-                    if (Array.isArray(json)) {
-                        albumMeta = json[0] || null;
-                        const items = json[1]?.items || [];
-                        tracks = items.map(x => x?.item).filter(Boolean);
-                    } else if (Array.isArray(json?.tracks)) {
-                        // fallback shape support
-                        tracks = json.tracks;
-                        albumMeta = albumFromSearch || null;
-                    } else {
-                        albumMeta = albumFromSearch || null;
-                    }
-
-                    // Header info using albumMeta when available
-                    const title = albumMeta?.title || albumFromSearch?.title || 'Album';
-                    const artistName = albumMeta?.artist?.name || (albumMeta?.artists && albumMeta.artists[0]?.name) || (albumFromSearch?.artists && albumFromSearch.artists[0]?.name) || 'Unknown Artist';
-                    const numTracks = albumMeta?.numberOfTracks ?? albumFromSearch?.numberOfTracks ?? (Array.isArray(tracks) ? tracks.length : 0);
-                    const releaseDate = albumMeta?.releaseDate || albumFromSearch?.releaseDate || '';
-                    const coverId = albumMeta?.cover || albumFromSearch?.cover || '';
-
+                    // Fetch album tracks from our API
+                    const resp = await musicApiFetch(`/api/album/${encodeURIComponent(albumFromSearch.id)}/tracks`);
+                    const albumMeta = resp.album || {};
+                    const tracks = Array.isArray(resp.tracks) ? resp.tracks : [];
+                    // Determine header info
+                    const title = albumMeta.name || albumFromSearch.name || albumFromSearch.title || 'Album';
+                    const artistName = albumMeta.artists || albumFromSearch.artists || 'Unknown Artist';
+                    const numTracks = albumMeta.totalTracks ?? albumFromSearch.totalTracks ?? albumFromSearch.numberOfTracks ?? tracks.length;
+                    const releaseDate = albumMeta.releaseDate || albumFromSearch.releaseDate || '';
+                    const coverUrl = albumMeta.albumArt || albumFromSearch.albumArt || '';
                     albumViewTitle.textContent = title;
                     albumViewMeta.textContent = `${artistName} · ${numTracks} tracks${releaseDate ? ' · ' + releaseDate : ''}`;
-                    albumViewCover.src = coverId ? tidalCoverUrl(coverId) : '';
-
-                    // Store tracks for Play All before rendering
-                    const coverSrc = coverId ? tidalCoverUrl(coverId) : '';
+                    albumViewCover.src = coverUrl || '';
+                    // Prepare queue for play all
                     currentAlbumTracks = tracks.map((t, idx) => {
-                        const trackId = t.id || t.trackNumber || idx + 1;
+                        const trackId = t.id || idx + 1;
                         const trackTitle = t.title || t.name || `Track ${idx+1}`;
-                        const trackArtist = (t.artists && t.artists[0]?.name) ? t.artists[0].name : artistName;
+                        const trackArtist = t.artists || artistName;
                         return {
                             id: trackId,
                             title: trackTitle,
                             artist: trackArtist,
-                            cover: coverSrc
+                            cover: coverUrl
                         };
-                    }).filter(t => t.id); // Only tracks with valid IDs
-
-                    renderAlbumTracks(tracks, { artists: [{ name: artistName }], cover: coverId });
+                    }).filter(t => t.id);
+                    renderAlbumTracks(tracks, { artists: artistName, albumArt: coverUrl });
                 } catch (e) {
                     console.error('[MUSIC] openAlbum error', e);
                     albumTracksEl.innerHTML = '<div class="album-empty">Failed to load album.</div>';
@@ -19431,16 +19455,29 @@ Your browser does not support the video tag.
                 albumTracksEl.innerHTML = '';
                 const coverSrc = album.cover ? tidalCoverUrl(album.cover) : '';
                 tracks.forEach((t, idx) => {
-                    const trackId = t.id || t.trackNumber || idx + 1; // prefer real id
+                    const trackId = t.id || idx + 1;
                     const trackTitle = t.title || t.name || `Track ${idx+1}`;
-                    const artistName = (t.artists && t.artists[0]?.name) ? t.artists[0].name : ((album.artists && album.artists[0]?.name) ? album.artists[0].name : 'Unknown Artist');
-                    const durationSec = (typeof t.duration === 'number') ? t.duration : (t.durationMs ? Math.round(t.durationMs/1000) : 0);
-                    
+                    // Use the provided artists string or album fallback
+                    const artistName = t.artists || album.artists || 'Unknown Artist';
+                    // Parse duration: could be number (seconds), string mm:ss, or durationMs (ms)
+                    let durationSec = 0;
+                    if (typeof t.duration === 'number') {
+                        durationSec = t.duration;
+                    } else if (typeof t.duration === 'string') {
+                        const parts = t.duration.split(':');
+                        if (parts.length >= 2) {
+                            const min = parseInt(parts[0], 10);
+                            const sec = parseInt(parts[1], 10);
+                            if (!isNaN(min) && !isNaN(sec)) durationSec = min * 60 + sec;
+                        }
+                    } else if (typeof t.durationMs === 'number') {
+                        durationSec = Math.round(t.durationMs / 1000);
+                    }
+                    const coverSrc = album.albumArt || album.cover || '';
                     const isDownloaded = isTrackDownloaded(trackId);
                     const downloadBtnClass = isDownloaded ? 'track-download-btn downloaded' : 'track-download-btn';
                     const downloadBtnIcon = isDownloaded ? 'fas fa-check-circle' : 'fas fa-download';
                     const downloadBtnTitle = isDownloaded ? 'Downloaded' : 'Download';
-
                     const row = document.createElement('div');
                     row.className = 'track-row';
                     row.innerHTML = `
@@ -19449,23 +19486,22 @@ Your browser does not support the video tag.
                         <div class="track-duration">${fmtTime(durationSec)}</div>
                         <div class="track-actions">
                             <button class="track-play-btn"><i class="fas fa-play"></i> Play</button>
-                            <button class="${downloadBtnClass}" title="${downloadBtnTitle}" data-id="${trackId}" data-title="${trackTitle.replace(/\"/g,'&quot;')}" data-artist="${artistName.replace(/\"/g,'&quot;')}" data-cover="${coverSrc}"><i class="${downloadBtnIcon}"></i> Download</button>
+                            <button class="${downloadBtnClass}" title="${downloadBtnTitle}" data-id="${trackId}" data-title="${trackTitle.replace(/\"/g,'&quot;')}" data-artist="${artistName.replace(/\"/g,'&quot;')}" data-cover="${coverSrc}"><i class="${downloadBtnIcon}"></i> ${isDownloaded ? 'Downloaded' : 'Download'}</button>
                             <button class="track-plus-btn"><i class="fas fa-plus"></i> Playlist</button>
                             <button class="track-heart-btn"><i class="fas fa-heart"></i> Save</button>
                         </div>`;
-
                     row.querySelector('.track-play-btn').addEventListener('click', () => {
-                        if (!t.id) { showNotification('Unable to play: missing track id', 'error'); return; }
-                        // Use the prebuilt album queue so next/prev works
-                        const idx = currentAlbumTracks.findIndex(x => String(x.id) === String(t.id));
-                        if (idx >= 0) {
-                            setPlayQueue(currentAlbumTracks, idx);
+                        if (!trackId) { showNotification('Unable to play: missing track id', 'error'); return; }
+                        // Use precomputed album queue
+                        const idxInQueue = currentAlbumTracks.findIndex(x => String(x.id) === String(trackId));
+                        if (idxInQueue >= 0) {
+                            setPlayQueue(currentAlbumTracks, idxInQueue);
                         } else {
-                            playMusicTrack({ trackId: t.id, title: trackTitle, artistName, coverSrc });
+                            playMusicTrack({ trackId: trackId, title: trackTitle, artistName, coverSrc });
                         }
                     });
                     row.querySelector('.track-download-btn').addEventListener('click', async () => {
-                        if (!t.id) { showNotification('Unable to download: missing track id', 'error'); return; }
+                        if (!trackId) { showNotification('Unable to download: missing track id', 'error'); return; }
                         if (isTrackDownloaded(trackId)) {
                             showNotification('Track already downloaded', 'info');
                             return;
@@ -19475,21 +19511,20 @@ Your browser does not support the video tag.
                         renderAlbumTracks(tracks, album);
                     });
                     row.querySelector('.track-plus-btn').addEventListener('click', () => {
-                        if (!t.id) { showNotification('Unable to add: missing track id', 'error'); return; }
-                        showPlaylistChooser({ id: String(t.id), title: trackTitle, artist: artistName, cover: coverSrc });
+                        if (!trackId) { showNotification('Unable to add: missing track id', 'error'); return; }
+                        showPlaylistChooser({ id: String(trackId), title: trackTitle, artist: artistName, cover: coverSrc });
                     });
                     row.querySelector('.track-heart-btn').addEventListener('click', () => {
-                        if (!t.id) { showNotification('Unable to save: missing track id', 'error'); return; }
+                        if (!trackId) { showNotification('Unable to save: missing track id', 'error'); return; }
                         const list = getMyMusic();
-                        if (!list.find(x => String(x.id) === String(t.id))) {
-                            list.push({ id: String(t.id), title: trackTitle, artist: artistName, cover: coverSrc });
+                        if (!list.find(x => String(x.id) === String(trackId))) {
+                            list.push({ id: String(trackId), title: trackTitle, artist: artistName, cover: coverSrc });
                             setMyMusic(list);
                             showNotification(`Saved "${trackTitle}" to My Music`, 'success');
                         } else {
                             showNotification('Already in My Music', 'info');
                         }
                     });
-
                     albumTracksEl.appendChild(row);
                 });
             }
@@ -19909,34 +19944,13 @@ Your browser does not support the video tag.
                     if (minSongEl) minSongEl.textContent = title;
                     if (minArtistEl) minArtistEl.textContent = artistName;
 
-                    updateBothProgressBars('0%', 'Fetching track information...');
-
-                    // Use the same API as playMusicTrack
-                    const data = await musicFetchJson(`/track/?id=${encodeURIComponent(trackId)}&quality=LOSSLESS`);
-                    let trackUrl = null;
-                    if (Array.isArray(data) && data.length >= 3) {
-                        trackUrl = data[2]?.OriginalTrackUrl || data[2]?.originalTrackUrl;
-                    }
-                    if (!trackUrl && Array.isArray(data)) {
-                        for (const item of data) {
-                            const candidate = item?.OriginalTrackUrl || item?.originalTrackUrl;
-                            if (candidate && !candidate.startsWith('http://www.tidal.com')) {
-                                trackUrl = candidate;
-                                break;
-                            }
-                        }
-                    }
-
-                    if (!trackUrl) throw new Error('No valid track URL found');
-
-                    updateBothProgressBars('10%', 'Starting download...');
+                    updateBothProgressBars('0%', 'Starting download...');
 
                     // Use the pre-assigned unique download ID
                     const downloadId = currentDownloadId;
                     currentDownloadCancelled = false;
-                    // Real-time updates (no step snapping)
 
-                    // Poll for progress updates BEFORE starting download
+                    // Poll for progress updates BEFORE and during download
                     const pollProgress = setInterval(async () => {
                         try {
                             const progressRes = await fetch(`/api/music/download/progress/${downloadId}`);
@@ -19951,6 +19965,7 @@ Your browser does not support the video tag.
                                 }
                                 if (progressData.complete) {
                                     clearInterval(pollProgress);
+                                    currentDownloadPoll = null;
                                 }
                             }
                         } catch (e) {
@@ -19964,7 +19979,7 @@ Your browser does not support the video tag.
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
-                            trackUrl,
+                            trackId,
                             songName: title,
                             artistName,
                             downloadId,
@@ -19972,17 +19987,30 @@ Your browser does not support the video tag.
                         }),
                         signal: currentDownloadController.signal
                     }).then(async (downloadRes) => {
-                        clearInterval(pollProgress);
-                        currentDownloadPoll = null;
-                        
                         if (!downloadRes.ok) {
                             const err = await downloadRes.json();
                             throw new Error(err.error || 'Download failed');
                         }
-
                         const result = await downloadRes.json();
-                        currentDownloadFilePath = result.filePath;
-                        
+                        // Save file path from immediate response
+                        if (result && result.filePath) {
+                            currentDownloadFilePath = result.filePath;
+                        }
+                        // Wait until progress indicates completion
+                        const waitForComplete = async () => {
+                            while (true) {
+                                const progRes = await fetch(`/api/music/download/progress/${downloadId}`);
+                                if (progRes.ok) {
+                                    const progData = await progRes.json();
+                                    if (progData.complete) {
+                                        if (progData.filePath) currentDownloadFilePath = progData.filePath;
+                                        break;
+                                    }
+                                }
+                                await new Promise(r => setTimeout(r, 300));
+                            }
+                        };
+                        await waitForComplete();
                         // Add to downloaded list with cover image (stored as data URL for offline when possible)
                         let coverToStore = coverSrc;
                         try { coverToStore = await fetchImageAsDataURL(coverSrc); } catch(_) {}
@@ -19991,12 +20019,12 @@ Your browser does not support the video tag.
                             title,
                             artist: artistName,
                             cover: coverToStore,
-                            filePath: result.filePath
+                            filePath: currentDownloadFilePath
                         });
 
                         // Update UI
                         updateBothProgressBars('100%', '✓ Download complete!');
-                        
+
                         setTimeout(() => {
                             const modal = document.getElementById('music-download-modal');
                             const minimized = document.getElementById('music-download-minimized');
@@ -20007,15 +20035,12 @@ Your browser does not support the video tag.
                             currentDownloadId = null;
                             // Return focus to the music search bar so user can continue searching
                             try { musicSearchInput && musicSearchInput.focus && musicSearchInput.focus(); } catch(_) {}
-                            
                             // Process next item in queue
                             if (downloadQueue.length > 0) {
                                 setTimeout(() => processDownloadQueue(), 500);
                             }
                         }, 1500);
-
                         showNotification(`Downloaded "${title}"`, 'success');
-                        
                         // Re-render music results to update button
                         const currentResults = window.currentMusicResults || [];
                         const currentQuery = window.currentMusicQuery || '';
@@ -20030,7 +20055,6 @@ Your browser does not support the video tag.
                         const minimized = document.getElementById('music-download-minimized');
                         modal.style.display = 'none';
                         minimized.style.display = 'none';
-                        
                         // Delete partial file if download was cancelled or failed
                         if (!currentDownloadCancelled && currentDownloadFilePath) {
                             fetch('/api/music/delete', {
@@ -20039,19 +20063,16 @@ Your browser does not support the video tag.
                                 body: JSON.stringify({ filePath: currentDownloadFilePath })
                             }).catch(e => console.error('Failed to delete partial file:', e));
                         }
-                        
                         currentDownloadController = null;
                         currentDownloadFilePath = null;
                         currentDownloadId = null;
                         // Ensure user can interact and refocus the search bar after failure
                         try { musicSearchInput && musicSearchInput.focus && musicSearchInput.focus(); } catch(_) {}
-                        
                         if (error.name === 'AbortError') {
                             showNotification('Download cancelled', 'info');
                         } else {
                             showNotification(`Download failed: ${error.message}`, 'error');
                         }
-                        
                         // Process next item in queue after error/cancellation
                         if (downloadQueue.length > 0) {
                             setTimeout(() => processDownloadQueue(), 1000);
@@ -20068,7 +20089,6 @@ Your browser does not support the video tag.
                     showNotification(`Failed to start download: ${error.message}`, 'error');
                     // Ensure focus returns to the search bar on error
                     try { musicSearchInput && musicSearchInput.focus && musicSearchInput.focus(); } catch(_) {}
-                    
                     // Process next item in queue after initial error
                     if (downloadQueue.length > 0) {
                         setTimeout(() => processDownloadQueue(), 1000);
@@ -21043,7 +21063,8 @@ Your browser does not support the video tag.
                         // Use local file endpoint
                         const source = document.createElement('source');
                         source.src = `/api/music/serve/${encodeURIComponent(downloadedTrack.filePath)}`;
-                        source.type = 'audio/flac';
+                        // Our downloaded files are MP3s, so specify the correct MIME type
+                        source.type = 'audio/mpeg';
                         musicAudio.appendChild(source);
 
                         // Load then check if player is still open before playing
@@ -21103,52 +21124,32 @@ Your browser does not support the video tag.
                     if (miniPlayerArtist) miniPlayerArtist.textContent = artistName;
                     if (miniPlayPauseBtn) miniPlayPauseBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
 
-                    const data = await musicFetchJson(`/track/?id=${encodeURIComponent(trackId)}&quality=LOSSLESS`);
-                    
-                    // Check if player was closed during fetch
-                    if (musicModal.style.display === 'none' && miniPlayer.style.display === 'none') {
-                        console.log('[MUSIC] Player was closed during fetch, aborting playback');
+                    // Obtain stream URL via our API (using Deezer metadata) instead of hardcoded proxy
+                    const apiResp = await musicApiFetch(`/api/stream-url?trackId=${encodeURIComponent(trackId)}`);
+                    const streamUrl = apiResp && apiResp.streamUrl ? apiResp.streamUrl : '';
+                    if (!streamUrl) {
+                        console.error('[MUSIC] Failed to get stream URL');
+                        showNotification('Failed to get stream URL', 'error');
+                        musicModal.style.display = 'none';
+                        miniPlayer.style.display = 'none';
                         return;
                     }
-                    
-                    let url = null;
-                    if (Array.isArray(data) && data.length >= 3) {
-                        // HiFi API returns [trackInfo, manifest, {OriginalTrackUrl: "..."}]
-                        // We want the third element with OriginalTrackUrl
-                        url = data[2]?.OriginalTrackUrl || data[2]?.originalTrackUrl;
+                    // Check if player was closed before preparing source
+                    if (musicModal.style.display === 'none' && miniPlayer.style.display === 'none') {
+                        console.log('[MUSIC] Player was closed before stream, aborting playback');
+                        return;
                     }
-                    // Fallback: scan all elements if not found
-                    if (!url && Array.isArray(data)) {
-                        for (const item of data) {
-                            const candidate = item?.OriginalTrackUrl || item?.originalTrackUrl;
-                            if (candidate && !candidate.startsWith('http://www.tidal.com')) {
-                                url = candidate;
-                                break;
-                            }
-                        }
-                    }
-                    if (!url) throw new Error('Track URL not found');
-
-                    // Set <source> with a suitable type hint
+                    // Clear existing sources
                     while (musicAudio.firstChild) musicAudio.removeChild(musicAudio.firstChild);
-                    const source = document.createElement('source');
-                    source.src = url;
-                    const lowerUrl = url.toLowerCase();
-                    if (lowerUrl.includes('.flac')) source.type = 'audio/flac';
-                    else if (lowerUrl.includes('.mp4') || lowerUrl.includes('.m4a')) source.type = 'audio/mp4';
-                    else if (lowerUrl.includes('.aac')) source.type = 'audio/aac';
-                    else if (lowerUrl.includes('.ogg') || lowerUrl.includes('.ogx')) source.type = 'audio/ogg';
-                    musicAudio.appendChild(source);
-
+                    // Assign stream URL directly to audio element
+                    musicAudio.src = streamUrl;
                     // Load then check if player is still open before playing
                     musicAudio.load();
-                    
                     // Check if player is still visible before playing
                     if (musicModal.style.display === 'none' && miniPlayer.style.display === 'none') {
                         console.log('[MUSIC] Player was closed before playback, aborting');
                         return;
                     }
-                    
                     try {
                         await musicAudio.play();
                     } catch (err) {
@@ -21160,7 +21161,6 @@ Your browser does not support the video tag.
                         }
                         await musicAudio.play();
                     }
-                    
                     // Final check before updating UI
                     if (musicModal.style.display === 'none' && miniPlayer.style.display === 'none') {
                         musicAudio.pause();

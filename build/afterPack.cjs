@@ -33,8 +33,36 @@ module.exports = async function afterPack(context) {
         }
       }
       
+      // Set executable permission on bundled yt-dlp for Linux
+      try {
+        // The binary is packaged inside the resources folder under linyt
+        const ytBinary = path.join(context.appOutDir, 'resources', 'linyt', 'yt-dlp_linux');
+        if (fs.existsSync(ytBinary)) {
+          fs.chmodSync(ytBinary, 0o755);
+          console.log('[afterPack] ✓ Set executable permission on:', ytBinary);
+        } else {
+          console.warn('[afterPack] ⚠ yt-dlp binary not found at', ytBinary);
+        }
+      } catch (err) {
+        console.warn('[afterPack] Failed to set permissions on yt-dlp_linux:', err.message);
+      }
+
       console.log('[afterPack] ✓ Linux build prepared');
     } else if (context.electronPlatformName === 'darwin') {
+      // Set executable permission on bundled yt-dlp for macOS
+      try {
+        // macOS bundles extra resources inside Contents/Resources
+        const ytBinaryMac = path.join(context.appOutDir, 'PlayTorrio.app', 'Contents', 'Resources', 'macyt', 'yt-dlp_macos');
+        if (fs.existsSync(ytBinaryMac)) {
+          fs.chmodSync(ytBinaryMac, 0o755);
+          console.log('[afterPack] ✓ Set executable permission on:', ytBinaryMac);
+        } else {
+          console.warn('[afterPack] ⚠ yt-dlp binary for mac not found at', ytBinaryMac);
+        }
+      } catch (err) {
+        console.warn('[afterPack] Failed to set permissions on yt-dlp_macos:', err.message);
+      }
+
       console.log('[afterPack] ✓ macOS build prepared');
     } else if (context.electronPlatformName === 'win32') {
       // Ensure mpv.js-master-updated has its own Electron 1.8.8 runtime bundled so it can launch independently

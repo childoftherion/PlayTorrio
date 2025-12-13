@@ -27,6 +27,16 @@ const dnsLookup = promisify(dns.lookup);
 
 // Create require for CommonJS modules
 const require = createRequire(import.meta.url);
+import qs from 'qs';
+import { execFile } from 'child_process';
+
+// Spotify Music Integration
+const SPOTIFY_CLIENT_ID = '6757e9618d9948b6b1f3312401bfcfa7';
+const SPOTIFY_CLIENT_SECRET = '0b7ec13743e7454981e0ad0d6b1d5aa5';
+let spotifyToken = '';
+let tokenExpiration = 0;
+const urlCache = new Map();
+const URL_CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
 
 // ===================================================
 // PLATFORM-SPECIFIC INITIALIZATION
@@ -837,6 +847,203 @@ function resolveVlcExe() {
     }
     return null;
 }
+
+// ===================================================
+// SPOTIFY/MUSIC HELPER FUNCTIONS
+// ===================================================
+
+function resolveYtdlpExe() {
+    try {
+        const candidates = [];
+        const execDir = path.dirname(process.execPath);
+        const resourcesPath = process.resourcesPath;
+
+        if (process.platform === 'win32') {
+            if (resourcesPath) {
+                candidates.push(path.join(resourcesPath, 'app.asar.unpacked', 'windlp', 'yt-dlp.exe'));
+                candidates.push(path.join(resourcesPath, 'windlp', 'yt-dlp.exe'));
+            }
+            candidates.push(path.join(execDir, 'windlp', 'yt-dlp.exe'));
+            candidates.push(path.join(__dirname, 'windlp', 'yt-dlp.exe'));
+        } else if (process.platform === 'darwin') {
+            if (resourcesPath) {
+                candidates.push(path.join(resourcesPath, 'app.asar.unpacked', 'macdlp', 'yt-dlp'));
+                candidates.push(path.join(resourcesPath, 'macdlp', 'yt-dlp'));
+            }
+            candidates.push(path.join(execDir, 'macdlp', 'yt-dlp'));
+            candidates.push(path.join(__dirname, 'macdlp', 'yt-dlp'));
+        } else { // linux
+            if (resourcesPath) {
+                candidates.push(path.join(resourcesPath, 'app.asar.unpacked', 'linuxdlp', 'yt-dlp'));
+                candidates.push(path.join(resourcesPath, 'linuxdlp', 'yt-dlp'));
+            }
+            candidates.push(path.join(execDir, 'linuxdlp', 'yt-dlp'));
+            candidates.push(path.join(__dirname, 'linuxdlp', 'yt-dlp'));
+        }
+
+        for (const p of candidates) {
+            try {
+                if (fs.existsSync(p)) {
+                    // On non-windows, ensure it's executable
+                    if (process.platform !== 'win32') {
+                        try { fs.chmodSync(p, 0o755); } catch (e) { console.error(`Failed to chmod yt-dlp at ${p}:`, e); }
+                    }
+                    return p;
+                }
+            } catch {}
+        }
+    } catch (err) {
+        console.error('[YTDLP] Resolver error:', err);
+    }
+    return null;
+}
+
+
+const formatDuration = (ms) => {
+  if (!ms || isNaN(ms)) return '0:00';
+  const min = Math.floor(ms / 60000);
+  const sec = Math.floor((ms % 60000) / 1000);
+  return `${min}:${sec.toString().padStart(2, '0')}`;
+};
+
+async function refreshSpotifyToken() {
+  if (Date.now() < tokenExpiration - 60000 && spotifyToken) return;
+  try {
+    const response = await got.post(
+      'https://accounts.spotify.com/api/token',
+      {
+        form: { grant_type: 'client_credentials' },
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'Authorization': 'Basic ' + Buffer.from(`${SPOTIFY_CLIENT_ID}:${SPOTIFY_CLIENT_SECRET}`).toString('base64')
+        },
+        responseType: 'json'
+      }
+    );
+    spotifyToken = response.body.access_token;
+    tokenExpiration = Date.now() + response.body.expires_in * 1000;
+    console.log('[Spotify] Token refreshed');
+  } catch (error) {
+    console.error('[Spotify] Token refresh failed:', error.message);
+    throw new Error('Could not refresh token');
+  }
+}
+
+async function callSpotifyApi(url) {
+  await refreshSpotifyToken();
+  const response = await got(url, {
+    headers: { Authorization: `Bearer ${spotifyToken}` },
+    timeout: { request: 10000 },
+    responseType: 'json'
+  });
+  return response.body;
+}
+
+function formatTrack(track) {
+  if (!track) return null;
+  return {
+    id: track.id,
+    title: track.name,
+    name: track.name,
+    artists: track.artists?.map(a => a.name).join(', ') || 'Unknown Artist',
+    channel: track.artists?.map(a => a.name).join(', ') || 'Unknown Artist',
+    duration: formatDuration(track.duration_ms),
+    albumArt: track.album?.images?.[0]?.url || '',
+    thumbnail: track.album?.images?.[0]?.url || '',
+    url: track.external_urls?.spotify || ''
+  };
+}
+
+function formatAlbum(album) {
+  if (!album) return null;
+  return {
+    id: album.id,
+    name: album.name,
+    artists: album.artists?.map(a => a.name).join(', ') || 'Unknown Artist',
+    albumArt: album.images?.[0]?.url || '',
+    releaseDate: album.release_date || '',
+    totalTracks: album.total_tracks || 0,
+    url: album.external_urls?.spotify || ''
+  };
+}
+
+async function getYouTubeAudioUrl(searchQuery, trackId) {
+    const cached = urlCache.get(trackId);
+    if (cached && Date.now() < cached.expiry) {
+        console.log('[YTMusic] Using cached URL for:', trackId);
+        return cached.url;
+    }
+
+    const ytdlpPath = resolveYtdlpExe();
+    if (!ytdlpPath) {
+        throw new Error('yt-dlp executable not found.');
+    }
+
+    console.log('[YTMusic] Searching:', searchQuery);
+
+    return new Promise((resolve, reject) => {
+        const args = [
+            '--dump-single-json',
+            '--no-check-certificates',
+            '--no-warnings',
+            '--prefer-free-formats',
+            '--add-header', 'referer:https://music.youtube.com/',
+            '--add-header', 'user-agent:Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            searchQuery
+        ];
+
+        execFile(ytdlpPath, args, { maxBuffer: 10 * 1024 * 1024 }, (error, stdout, stderr) => {
+            if (error) {
+                console.error('[YTMusic] execFile error:', stderr);
+                return reject(new Error(`yt-dlp failed: ${stderr}`));
+            }
+
+            try {
+                const audioUrl = JSON.parse(stdout);
+                let streamUrl = null;
+
+                if (audioUrl.formats) {
+                    const audioFormats = audioUrl.formats.filter(f =>
+                        f.acodec && f.acodec !== 'none' &&
+                        (!f.vcodec || f.vcodec === 'none') &&
+                        f.url
+                    );
+
+                    if (audioFormats.length > 0) {
+                        audioFormats.sort((a, b) => (b.abr || 0) - (a.abr || 0));
+                        streamUrl = audioFormats[0].url;
+                    } else {
+                        const withAudio = audioUrl.formats.filter(f =>
+                            f.acodec && f.acodec !== 'none' && f.url
+                        );
+                        if (withAudio.length > 0) {
+                            withAudio.sort((a, b) => (b.abr || 0) - (a.abr || 0));
+                            streamUrl = withAudio[0].url;
+                        }
+                    }
+                }
+
+                if (!streamUrl && audioUrl.url) {
+                    streamUrl = audioUrl.url;
+                }
+
+                if (!streamUrl) {
+                    throw new Error('Could not extract audio URL');
+                }
+
+                urlCache.set(trackId, {
+                    url: streamUrl,
+                    expiry: Date.now() + URL_CACHE_DURATION
+                });
+                resolve(streamUrl);
+
+            } catch (parseError) {
+                reject(new Error('Failed to parse yt-dlp output.'));
+            }
+        });
+    });
+}
+
 
 // Launch MPV and set up cleanup listeners
 async function openInMPV(win, streamUrl, infoHash, startSeconds) {
@@ -3294,130 +3501,7 @@ ipcMain.handle("manifestRead", async () => {
         }
     });
 
-    // ----------------------
-    // Music Offline Download
-    // ----------------------
-    const HIFI_BASE = 'https://hifi.401658.xyz';
-    const offlineDir = path.join(app.getPath('userData'), 'music_offline');
-    const coversDir = path.join(offlineDir, 'covers');
-    const offlineIndexPath = path.join(offlineDir, 'offline_music.json');
-    function ensureDirSync(dir) {
-        try { fs.mkdirSync(dir, { recursive: true }); } catch(_) {}
-    }
-    function readOfflineIndex() {
-        try {
-            if (fs.existsSync(offlineIndexPath)) {
-                return JSON.parse(fs.readFileSync(offlineIndexPath, 'utf8'));
-            }
-        } catch(_) {}
-        return [];
-    }
-    function writeOfflineIndex(arr) {
-        try { ensureDirSync(offlineDir); fs.writeFileSync(offlineIndexPath, JSON.stringify(arr, null, 2)); } catch(_) {}
-    }
-    function sanitizeFilename(name) {
-        return (name || '').replace(/[\\/:*?"<>|]/g, '_').slice(0, 120);
-    }
-    async function downloadToFile(url, destPath) {
-        await streamPipeline(got.stream(url), fs.createWriteStream(destPath));
-        return destPath;
-    }
-
-    ipcMain.handle('music-download-track', async (event, track) => {
-        try {
-            if (!track || !track.id) return { success: false, message: 'Invalid track' };
-            ensureDirSync(offlineDir); ensureDirSync(coversDir);
-            const index = readOfflineIndex();
-            // If already exists, return it
-            const existing = index.find(e => e.id == track.id);
-            if (existing && fs.existsSync(existing.filePath)) {
-                return { success: true, entry: existing, already: true };
-            }
-            // Fetch OriginalTrackUrl
-            const resp = await got(`${HIFI_BASE}/track/?id=${encodeURIComponent(track.id)}&quality=LOSSLESS`, { timeout: 20000 }).json();
-            let audioUrl = null;
-            if (Array.isArray(resp)) {
-                for (const it of resp) {
-                    const cand = it?.OriginalTrackUrl || it?.originalTrackUrl;
-                    if (cand && !String(cand).includes('tidal.com/browse')) { audioUrl = cand; break; }
-                }
-            }
-            if (!audioUrl) return { success: false, message: 'Audio URL not found' };
-            const lower = audioUrl.toLowerCase();
-            let ext = 'mp3';
-            if (lower.includes('.flac')) ext = 'flac';
-            else if (lower.includes('.m4a')) ext = 'm4a';
-            else if (lower.includes('.mp4')) ext = 'mp4';
-            else if (lower.includes('.aac')) ext = 'aac';
-            else if (lower.includes('.ogg')) ext = 'ogg';
-            const baseName = sanitizeFilename(`${track.artist || 'Artist'} - ${track.title || 'Track'}`);
-            const audioPath = path.join(offlineDir, `${baseName}.${ext}`);
-            await downloadToFile(audioUrl, audioPath);
-            // Download cover offline if available and http(s)
-            let coverPath = '';
-            try {
-                if (track.cover && /^https?:\/\//i.test(track.cover)) {
-                    const coverExt = track.cover.toLowerCase().includes('.png') ? 'png' : 'jpg';
-                    const coverName = sanitizeFilename(`${track.id}.${coverExt}`);
-                    const coverDest = path.join(coversDir, coverName);
-                    await downloadToFile(track.cover, coverDest);
-                    coverPath = coverDest;
-                }
-            } catch(_) {}
-
-            const entry = {
-                id: track.id,
-                title: track.title || 'Unknown Title',
-                artist: track.artist || 'Unknown Artist',
-                cover: coverPath || track.cover || '',
-                filePath: audioPath,
-                ext,
-                addedAt: new Date().toISOString()
-            };
-            const updated = existing ? index.map(e => e.id == entry.id ? entry : e) : [...index, entry];
-            writeOfflineIndex(updated);
-            return { success: true, entry };
-        } catch (e) {
-            console.error('[Music Offline] download failed:', e);
-            return { success: false, message: e?.message || 'Download failed' };
-        }
-    });
-
-    ipcMain.handle('music-offline-library', async () => {
-        try {
-            const index = readOfflineIndex();
-            // Filter out missing files
-            const valid = index.filter(e => {
-                try { return e.filePath && fs.existsSync(e.filePath); } catch(_) { return false; }
-            });
-            if (valid.length !== index.length) writeOfflineIndex(valid);
-            return { success: true, items: valid };
-        } catch (e) {
-            return { success: false, items: [], message: e?.message || 'Failed to read offline library' };
-        }
-    });
-
-    ipcMain.handle('music-offline-delete', async (event, entryId) => {
-        try {
-            if (!entryId) return { success: false, message: 'Missing id' };
-            const index = readOfflineIndex();
-            const entry = index.find(e => e.id == entryId);
-            if (entry) {
-                try { if (entry.filePath && fs.existsSync(entry.filePath)) fs.unlinkSync(entry.filePath); } catch(_) {}
-                // Remove cover only if inside coversDir
-                try {
-                    if (entry.cover && entry.cover.startsWith(coversDir) && fs.existsSync(entry.cover)) fs.unlinkSync(entry.cover);
-                } catch(_) {}
-            }
-            const updated = index.filter(e => e.id != entryId);
-            writeOfflineIndex(updated);
-            return { success: true };
-        } catch (e) {
-            return { success: false, message: e?.message || 'Failed to delete offline item' };
-        }
-    });
-
-    // Playlist import/export dialog handlers
+// EPUB Library functionality
     ipcMain.handle('show-save-dialog', async (event, options) => {
         try {
             const result = await dialog.showSaveDialog(mainWindow, options);
@@ -3505,9 +3589,123 @@ ipcMain.handle("manifestRead", async () => {
             return { success: true };
         } catch (e) {
             console.error('[UserPrefs] Failed to save', key, ':', e?.message);
+            console.error('[UserPrefs] Failed to save', key, ':', e?.message);
             return { success: false, error: e?.message || String(e) };
         }
     });
+
+    // ===================================================
+    // MUSIC IPC HANDLERS
+    // ===================================================
+    
+    const SEED_ARTISTS = [
+      '06HL4z0CvFAxyc27GXpf02', '3TVXtAsR1Inumwj472S9r4', '1Xyo4u8uXC1ZmMpatF05PJ',
+      '66CXWjxzNUsdJxJ2JdwvnR', '4q3ewBCX7sLwd24euuV69X', '0EmeFodog0BfCgMzAIvKQp',
+      '53XhwfbYqKCa1cC15pYq2q', '6eUKZXaKkcviH0Ku9w2n3V', '7dGJo4pcD2V6oG8kP0tJRR',
+      '3Nrfpe0tUJi4K4DXYWgMUX'
+    ];
+
+    const SEED_TRACKS = [
+      '11dFghVXANMlKmJXsNCbNl', '0VjIjW4GlUZAMYd2vXMi3b', '6UelLqGlWMcVH1E5c4H7lY',
+      '3n3Ppam7vgaVa1iaRUc9Lp', '5ChkMS8OtdzJeqyybCc9R5'
+    ];
+
+    ipcMain.handle('music-get-tracks', async (event, { page, limit }) => {
+        try {
+            let tracks = [];
+            if (page === 0) {
+                try {
+                    const data = await callSpotifyApi(`https://api.spotify.com/v1/recommendations?seed_artists=${SEED_ARTISTS.slice(0, 5).join(',')}&limit=${limit}`);
+                    tracks = (data.tracks || []).map(formatTrack).filter(Boolean);
+                } catch (error) {
+                    console.error('[Tracks] Recommendations failed:', error.message);
+                }
+            } else if (page === 1) {
+                try {
+                    const data = await callSpotifyApi(`https://api.spotify.com/v1/recommendations?seed_tracks=${SEED_TRACKS.slice(0, 5).join(',')}&limit=${limit}`);
+                    tracks = (data.tracks || []).map(formatTrack).filter(Boolean);
+                } catch (error) {
+                    console.error('[Tracks] Track recommendations failed:', error.message);
+                }
+            }
+
+            if (tracks.length === 0) {
+                const searchTerms = ['top hits', 'popular songs', 'best music', 'trending', 'viral', 'chart toppers', 'new music', 'hot songs'];
+                const searchTerm = searchTerms[page % searchTerms.length];
+                const data = await callSpotifyApi(`https://api.spotify.com/v1/search?q=${encodeURIComponent(searchTerm)}&type=track&limit=${limit}`);
+                tracks = (data.tracks?.items || []).map(formatTrack).filter(Boolean);
+            }
+            return { success: true, tracks, hasMore: tracks.length === limit };
+        } catch (err) {
+            console.error('[Music] Error getting tracks:', err.message);
+            return { success: false, error: err.message };
+        }
+    });
+
+    ipcMain.handle('music-get-albums', async (event, { page, limit }) => {
+        try {
+            const searchTerms = ['new releases', 'popular albums', 'top albums', 'trending albums', 'best albums'];
+            const searchTerm = searchTerms[page % searchTerms.length];
+            const data = await callSpotifyApi(`https://api.spotify.com/v1/search?q=${encodeURIComponent(searchTerm)}&type=album&limit=${limit}`);
+            const albums = (data.albums?.items || []).map(formatAlbum).filter(Boolean);
+            return { success: true, albums, hasMore: albums.length === limit };
+        } catch (err) {
+            console.error('[Music] Error getting albums:', err.message);
+            return { success: false, error: err.message };
+        }
+    });
+
+    ipcMain.handle('music-search', async (event, { q, limit, type }) => {
+        try {
+            const data = await callSpotifyApi(`https://api.spotify.com/v1/search?q=${encodeURIComponent(q)}&type=${type}&limit=${Math.min(parseInt(limit), 50)}`);
+            if (type === 'album') {
+                const albums = (data.albums?.items || []).map(formatAlbum).filter(Boolean);
+                return { success: true, results: albums };
+            } else {
+                const tracks = (data.tracks?.items || []).map(formatTrack).filter(Boolean);
+                return { success: true, results: tracks };
+            }
+        } catch (error) {
+            console.error('[Music] Search Error:', error.message);
+            return { success: false, error: 'Search failed' };
+        }
+    });
+
+    ipcMain.handle('music-get-album-tracks', async (event, { albumId }) => {
+        try {
+            const albumData = await callSpotifyApi(`https://api.spotify.com/v1/albums/${albumId}`);
+            const tracksData = await callSpotifyApi(`https://api.spotify.com/v1/albums/${albumId}/tracks?limit=50`);
+            const tracks = (tracksData.items || []).map(track => ({
+                id: track.id,
+                title: track.name,
+                name: track.name,
+                artists: track.artists?.map(a => a.name).join(', ') || 'Unknown Artist',
+                duration: formatDuration(track.duration_ms),
+                albumArt: albumData.images?.[0]?.url || '',
+                thumbnail: albumData.images?.[0]?.url || '',
+                url: track.external_urls?.spotify || ''
+            })).filter(Boolean);
+            return { success: true, album: formatAlbum(albumData), tracks: tracks };
+        } catch (error) {
+            console.error('[Music] Album Tracks Error:', error.message);
+            return { success: false, error: 'Failed to load album tracks' };
+        }
+    });
+
+    ipcMain.handle('music-get-stream-url', async (event, { trackId }) => {
+        try {
+            const track = await callSpotifyApi(`https://api.spotify.com/v1/tracks/${trackId}`);
+            const title = track.name;
+            const artists = track.artists.map(a => a.name).join(', ');
+            const searchQuery = `ytsearch1:"${title} ${artists} official audio"`;
+            const streamUrl = await getYouTubeAudioUrl(searchQuery, trackId);
+            return { success: true, streamUrl };
+        } catch (err) {
+            console.error('[Music] Stream URL Error:', err.message);
+            return { success: false, error: 'Failed to get stream URL' };
+        }
+    });
+
 
         // Initialize the auto-updater with platform-aware gating
         const shouldEnableUpdater = () => {

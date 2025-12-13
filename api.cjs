@@ -5762,12 +5762,694 @@ app.get("/comics-proxy", async (req, res) => {
 // ERROR HANDLERS & SERVER STARTUP
 // ============================================================================
 
+
+
+
+
 app.use((error, req, res, next) => {
     console.error('Server error:', error);
     res.status(500).json({ error: 'Internal server error' });
 });
 
 } // End of registerApiRoutes function
+
+// ======================= MUSIC API (REWRITTEN) =======================
+const qs = require('qs');
+const { spawn } = require('child_process');
+const ffmpegInstaller = require('@ffmpeg-installer/ffmpeg');
+
+// ---- CONFIG ----
+const SPOTIFY_CLIENT_ID = '6757e9618d9948b6b1f3312401bfcfa7';
+const SPOTIFY_CLIENT_SECRET = '0b7ec13743e7454981e0ad0d6b1d5aa5';
+
+// ---- STATE ----
+let spotifyToken = '';
+let tokenExpiration = 0;
+// Path to yt-dlp binary; will be set in initMusicDeps
+let ytDlpPath = null;
+
+// ---- CACHE ----
+const urlCache = new Map();
+const URL_CACHE_DURATION = 5 * 60 * 1000;
+
+// Store download progress: downloadId -> { progress, filePath, complete, error, proc }
+const downloadProgress = new Map();
+
+// ---- SEEDS ----
+const SEED_ARTISTS = [
+  '06HL4z0CvFAxyc27GXpf02','3TVXtAsR1Inumwj472S9r4','1Xyo4u8uXC1ZmMpatF05PJ',
+  '66CXWjxzNUsdJxJ2JdwvnR','4q3ewBCX7sLwd24euuV69X','0EmeFodog0BfCgMzAIvKQp',
+  '53XhwfbYqKCa1cC15pYq2q','6eUKZXaKkcviH0Ku9w2n3V','7dGJo4pcD2V6oG8kP0tJRR',
+  '3Nrfpe0tUJi4K4DXYWgMUX'
+];
+const SEED_TRACKS = [
+  '11dFghVXANMlKmJXsNCbNl','0VjIjW4GlUZAMYd2vXMi3b','6UelLqGlWMcVH1E5c4H7lY',
+  '3n3Ppam7vgaVa1iaRUc9Lp','5ChkMS8OtdzJeqyybCc9R5'
+];
+
+// ---- HELPERS ----
+const formatDuration = (ms) => {
+  if (!ms || isNaN(ms)) return '0:00';
+  const min = Math.floor(ms / 60000);
+  const sec = Math.floor((ms % 60000) / 1000);
+  return `${min}:${sec.toString().padStart(2, '0')}`;
+};
+
+/**
+ * Call Deezer API (no auth required)
+ * @param {string} url
+ * @returns {Promise<any>}
+ */
+async function callDeezerApi(url) {
+  try {
+    const response = await axios.get(url, { timeout: 10000 });
+    return response.data;
+  } catch (err) {
+    const message = (err && err.response && err.response.statusText) || err.message || 'Unknown Deezer error';
+    throw new Error('Deezer API error: ' + message);
+  }
+}
+
+/**
+ * Format a Deezer track object into the common track structure.
+ * Deezer durations are provided in seconds so convert to ms.
+ * @param {object} track
+ * @returns {object|null}
+ */
+function formatDeezerTrack(track) {
+  if (!track) return null;
+  const durationMs = typeof track.duration === 'number' ? track.duration * 1000 : 0;
+  return {
+    id: track.id,
+    title: track.title,
+    name: track.title,
+    artists: track.artist?.name || 'Unknown Artist',
+    channel: track.artist?.name || 'Unknown Artist',
+    duration: formatDuration(durationMs),
+    albumArt: track.album?.cover_big || track.album?.cover_xl || track.album?.cover || '',
+    thumbnail: track.album?.cover_medium || track.album?.cover || '',
+    url: track.link || ''
+  };
+}
+
+/**
+ * Format a Deezer album object into the common album structure.
+ * @param {object} album
+ * @returns {object|null}
+ */
+function formatDeezerAlbum(album) {
+  if (!album) return null;
+  return {
+    id: album.id,
+    name: album.title,
+    artists: album.artist?.name || 'Unknown Artist',
+    albumArt: album.cover_big || album.cover_xl || album.cover || '',
+    releaseDate: album.release_date || '',
+    totalTracks: album.nb_tracks || 0,
+    url: album.link || ''
+  };
+}
+
+async function refreshSpotifyToken() {
+  if (Date.now() < tokenExpiration - 60000 && spotifyToken) return;
+  const response = await axios.post(
+    'https://accounts.spotify.com/api/token',
+    qs.stringify({ grant_type: 'client_credentials' }),
+    {
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        Authorization:
+          'Basic ' +
+          Buffer.from(`${SPOTIFY_CLIENT_ID}:${SPOTIFY_CLIENT_SECRET}`).toString('base64')
+      }
+    }
+  );
+  spotifyToken = response.data.access_token;
+  tokenExpiration = Date.now() + response.data.expires_in * 1000;
+}
+
+async function callSpotifyApi(url) {
+  await refreshSpotifyToken();
+  const response = await axios.get(url, {
+    headers: { Authorization: `Bearer ${spotifyToken}` },
+    timeout: 10000
+  });
+  return response.data;
+}
+
+function formatTrack(track) {
+  if (!track) return null;
+  return {
+    id: track.id,
+    title: track.name,
+    name: track.name,
+    artists: track.artists?.map(a => a.name).join(', ') || 'Unknown Artist',
+    channel: track.artists?.map(a => a.name).join(', ') || 'Unknown Artist',
+    duration: formatDuration(track.duration_ms),
+    albumArt: track.album?.images?.[0]?.url || '',
+    thumbnail: track.album?.images?.[0]?.url || '',
+    url: track.external_urls?.spotify || ''
+  };
+}
+
+function formatAlbum(album) {
+  if (!album) return null;
+  return {
+    id: album.id,
+    name: album.name,
+    artists: album.artists?.map(a => a.name).join(', ') || 'Unknown Artist',
+    albumArt: album.images?.[0]?.url || '',
+    releaseDate: album.release_date || '',
+    totalTracks: album.total_tracks || 0,
+    url: album.external_urls?.spotify || ''
+  };
+}
+
+// Run yt-dlp with given arguments and return stdout string
+function runYtDlp(args) {
+  return new Promise((resolve, reject) => {
+    const proc = spawn(ytDlpPath, args, { windowsHide: true });
+    let stdout = '';
+    let stderr = '';
+    proc.stdout.on('data', d => { stdout += d.toString(); });
+    proc.stderr.on('data', d => { stderr += d.toString(); });
+    proc.on('close', (code) => {
+      if (code === 0) {
+        resolve(stdout);
+      } else {
+        reject(new Error(stderr || `yt-dlp exited with code ${code}`));
+      }
+    });
+    proc.on('error', (err) => {
+      reject(err);
+    });
+  });
+}
+
+async function getYouTubeAudioUrl(searchQuery, trackId) {
+  // Ensure yt-dlp binary is located
+  try {
+    initMusicDeps();
+  } catch (_) {
+    // ignore init errors; will be handled when spawning
+  }
+
+  // Return cached URL if available and valid
+  const cached = urlCache.get(trackId);
+  if (cached && Date.now() < cached.expiry) {
+    return cached.url;
+  }
+
+  // Build yt-dlp arguments to emulate yt-dlp-wrap getVideoInfo behavior
+  const args = [
+    '--dump-single-json',
+    '--no-check-certificate',
+    '--no-warnings',
+    '--prefer-free-formats',
+    '--add-header', 'referer:https://music.youtube.com/',
+    '--add-header', 'user-agent:Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+    searchQuery
+  ];
+  // Run yt-dlp to obtain JSON metadata for the first search result
+  const jsonOutput = await runYtDlp(args);
+  const info = JSON.parse(jsonOutput);
+  // Some versions of yt-dlp return a playlist object with entries instead of formats directly
+  let formats = info.formats;
+  if ((!formats || formats.length === 0) && Array.isArray(info.entries) && info.entries.length > 0) {
+    formats = info.entries[0].formats;
+  }
+  let streamUrl = null;
+  if (Array.isArray(formats) && formats.length > 0) {
+    // Filter audio-only formats
+    const audioFormats = formats.filter(f =>
+      f.acodec && f.acodec !== 'none' && (!f.vcodec || f.vcodec === 'none') && f.url
+    );
+    if (audioFormats.length > 0) {
+      // Sort by audio bitrate (higher first)
+      audioFormats.sort((a, b) => (b.abr || 0) - (a.abr || 0));
+      streamUrl = audioFormats[0].url;
+    } else {
+      // Fallback: choose any format with audio and a URL
+      const withAudio = formats.filter(f => f.acodec && f.acodec !== 'none' && f.url);
+      if (withAudio.length > 0) {
+        withAudio.sort((a, b) => (b.abr || 0) - (a.abr || 0));
+        streamUrl = withAudio[0].url;
+      }
+    }
+  }
+  // Another fallback: use top-level URL if available
+  if (!streamUrl && info.url) {
+    streamUrl = info.url;
+  }
+  if (!streamUrl) {
+    throw new Error('Could not extract audio URL');
+  }
+  // Cache the URL for a short period
+  urlCache.set(trackId, {
+    url: streamUrl,
+    expiry: Date.now() + URL_CACHE_DURATION
+  });
+  return streamUrl;
+}
+
+// Sanitize file names for downloads
+function sanitizeFileName(name) {
+  return name.replace(/[<>:"/\\|?*]+/g, '').trim();
+}
+
+// ---- INIT ----
+function initMusicDeps() {
+  if (ytDlpPath) return;
+  const platform = process.platform;
+  const folderName = platform === 'win32' ? 'yt' : (platform === 'darwin' ? 'macyt' : 'linyt');
+  // Candidate base directories: resourcesPath, app.asar.unpacked, cwd, __dirname
+  const baseCandidates = [];
+  if (process.resourcesPath) {
+    baseCandidates.push(path.join(process.resourcesPath));
+    baseCandidates.push(path.join(process.resourcesPath, 'app.asar.unpacked'));
+  }
+  baseCandidates.push(process.cwd());
+  baseCandidates.push(__dirname);
+  const binNames = [];
+  if (platform === 'win32') {
+    binNames.push('yt-dlp.exe');
+    binNames.push('yt-dlp_windows.exe');
+  } else if (platform === 'darwin') {
+    binNames.push('yt-dlp_macos');
+    binNames.push('yt-dlp');
+  } else {
+    binNames.push('yt-dlp_linux');
+    binNames.push('yt-dlp');
+  }
+  for (const base of baseCandidates) {
+    for (const bin of binNames) {
+      const candidate = path.join(base, folderName, bin);
+      try {
+        if (fs.existsSync(candidate)) {
+          ytDlpPath = candidate;
+          console.log('[Music] yt-dlp binary located at:', ytDlpPath);
+          return;
+        }
+      } catch (_) {
+        // ignore errors
+      }
+    }
+  }
+  // Fallback to /yt for backwards compatibility
+  const fallbackFolder = path.join(process.cwd(), 'yt');
+  const fallbackNames = ['yt-dlp.exe','yt-dlp','youtube-dl.exe','yt-dlp_windows.exe'];
+  for (const bin of fallbackNames) {
+    const candidate = path.join(fallbackFolder, bin);
+    if (fs.existsSync(candidate)) {
+      ytDlpPath = candidate;
+      console.log('[Music] yt-dlp binary located at:', ytDlpPath);
+      return;
+    }
+  }
+  throw new Error('yt-dlp binary not found in expected locations');
+}
+
+// ---- ROUTES ----
+function registerMusicApi(app) {
+  // Tracks: recommendations using Deezer charts
+  app.get('/api/tracks', async (req, res) => {
+    try {
+      const limit = Math.min(parseInt(req.query.limit || '20', 10), 50);
+      const data = await callDeezerApi(`https://api.deezer.com/chart/0/tracks?limit=${limit}`);
+      const items = Array.isArray(data?.data) ? data.data : Array.isArray(data?.tracks?.data) ? data.tracks.data : [];
+      const tracks = items.map(formatDeezerTrack).filter(Boolean);
+      res.json({ success: true, tracks });
+    } catch (e) {
+      res.status(500).json({ success: false, error: e.message });
+    }
+  });
+
+  // Search for tracks or albums via Deezer
+  app.get('/api/search', async (req, res) => {
+    try {
+      const q = req.query.q;
+      const limit = Math.min(parseInt(req.query.limit || '20', 10), 50);
+      const type = String(req.query.type || 'track');
+      if (!q) {
+        return res.status(400).json({ success: false, error: 'Missing query' });
+      }
+      if (type === 'album') {
+        const data = await callDeezerApi(`https://api.deezer.com/search/album?q=${encodeURIComponent(q)}&limit=${limit}`);
+        const items = Array.isArray(data?.data) ? data.data : [];
+        const results = items.map(formatDeezerAlbum).filter(Boolean);
+        return res.json({ success: true, results });
+      }
+      // default to track search
+      const data = await callDeezerApi(`https://api.deezer.com/search?q=${encodeURIComponent(q)}&limit=${limit}`);
+      const items = Array.isArray(data?.data) ? data.data : [];
+      const results = items.map(formatDeezerTrack).filter(Boolean);
+      return res.json({ success: true, results });
+    } catch (e) {
+      res.status(500).json({ success: false, error: e.message });
+    }
+  });
+
+  // Albums listing using Deezer charts
+  app.get('/api/albums', async (_req, res) => {
+    try {
+      const data = await callDeezerApi('https://api.deezer.com/chart/0/albums?limit=20');
+      const items = Array.isArray(data?.data) ? data.data : Array.isArray(data?.albums?.data) ? data.albums.data : [];
+      const albums = items.map(formatDeezerAlbum).filter(Boolean);
+      res.json({ success: true, albums });
+    } catch (e) {
+      res.status(500).json({ success: false, error: e.message });
+    }
+  });
+
+  // Tracks in album via Deezer
+  app.get('/api/album/:albumId/tracks', async (req, res) => {
+    try {
+      const albumId = req.params.albumId;
+      const album = await callDeezerApi(`https://api.deezer.com/album/${albumId}`);
+      const tracksData = await callDeezerApi(`https://api.deezer.com/album/${albumId}/tracks`);
+      const items = Array.isArray(tracksData?.data) ? tracksData.data : [];
+      const tracks = items.map((t) => {
+        const formatted = formatDeezerTrack(t);
+        if (album && formatted) {
+          formatted.albumArt = album.cover_big || album.cover_xl || album.cover || formatted.albumArt;
+        }
+        return formatted;
+      }).filter(Boolean);
+      res.json({ success: true, album: formatDeezerAlbum(album), tracks });
+    } catch (e) {
+      res.status(500).json({ success: false, error: e.message });
+    }
+  });
+
+  // Provide proxy stream URL (for convenience)
+  app.get('/api/stream-url', (req, res) => {
+    res.json({ success: true, streamUrl: `/api/proxy-stream?trackId=${req.query.trackId}` });
+  });
+
+  // Stream audio via yt-dlp; supports Range requests
+  app.get('/api/proxy-stream', async (req, res) => {
+    const trackId = req.query.trackId;
+    if (!trackId) return res.status(400).send('Missing trackId');
+    // Get track details to construct search query using Deezer
+    let searchQuery;
+    try {
+      const trackInfo = await callDeezerApi(`https://api.deezer.com/track/${trackId}`);
+      const title = trackInfo?.title || '';
+      const artistName = trackInfo?.artist?.name || '';
+      searchQuery = `ytsearch1:${title} ${artistName} official audio topic`;
+    } catch (err) {
+      searchQuery = '';
+    }
+    if (!searchQuery) {
+      return res.status(400).send('Invalid track ID');
+    }
+    // Attempt streaming up to 2 times if remote 416
+    let attempt = 0;
+    const maxAttempts = 2;
+    while (attempt < maxAttempts) {
+      try {
+        const streamUrl = await getYouTubeAudioUrl(searchQuery, trackId);
+        const headers = {
+          'User-Agent': 'Mozilla/5.0',
+          'Referer': 'https://music.youtube.com/',
+          'Origin': 'https://music.youtube.com'
+        };
+        if (req.headers.range) {
+          headers['Range'] = req.headers.range;
+        }
+        const response = await axios({
+          method: 'GET',
+          url: streamUrl,
+          headers: headers,
+          responseType: 'stream',
+          timeout: 30000,
+          validateStatus: (status) => status === 200 || status === 206 || status === 416
+        });
+        // If remote returns 416, clear cache and retry
+        if (response.status === 416) {
+          urlCache.delete(trackId);
+          attempt++;
+          if (attempt >= maxAttempts) {
+            throw new Error('Range not satisfiable after retry');
+          }
+          continue;
+        }
+        // Set headers for partial or full response
+        res.setHeader('Content-Type', response.headers['content-type'] || 'audio/webm');
+        res.setHeader('Accept-Ranges', 'bytes');
+        res.setHeader('Cache-Control', 'no-cache');
+        if (response.headers['content-length']) {
+          res.setHeader('Content-Length', response.headers['content-length']);
+        }
+        if (response.headers['content-range']) {
+          res.setHeader('Content-Range', response.headers['content-range']);
+          res.status(206);
+        } else {
+          res.status(200);
+        }
+        response.data.pipe(res);
+        response.data.on('error', () => {
+          if (!res.headersSent) {
+            res.status(500).send('Stream error');
+          }
+        });
+        req.on('close', () => {
+          response.data.destroy();
+        });
+        return;
+      } catch (err) {
+        urlCache.delete(trackId);
+        attempt++;
+        if (attempt >= maxAttempts) {
+          if (!res.headersSent) {
+            res.status(500).send('Failed to stream: ' + err.message);
+          }
+          return;
+        }
+      }
+    }
+  });
+
+  // Download MP3
+  app.post('/api/music/download', async (req, res) => {
+    try {
+      const { trackId, songName, artistName, downloadId, cover } = req.body || {};
+      if (!trackId || !downloadId) {
+        return res.status(400).json({ error: 'Missing trackId or downloadId' });
+      }
+      // Ensure binary path ready
+      initMusicDeps();
+      // Determine downloads directory
+      let downloadsDir;
+      try {
+        const electronApp = require('electron').app;
+        if (electronApp && typeof electronApp.getPath === 'function') {
+          downloadsDir = path.join(electronApp.getPath('userData'), 'music_downloads');
+        } else {
+          const home = os.homedir();
+          downloadsDir = path.join(home, '.playtorrio', 'music_downloads');
+        }
+      } catch (_) {
+        const home = os.homedir();
+        downloadsDir = path.join(home, '.playtorrio', 'music_downloads');
+      }
+      fs.mkdirSync(downloadsDir, { recursive: true });
+      // Build sanitized file name
+      const cleanName = sanitizeFileName(`${songName || ''} - ${artistName || ''}`.trim() || trackId);
+      let filePath = path.join(downloadsDir, `${cleanName}.mp3`);
+      let suffix = 1;
+      while (fs.existsSync(filePath)) {
+        filePath = path.join(downloadsDir, `${cleanName} (${suffix}).mp3`);
+        suffix++;
+      }
+      // Get track info for search (optional) using Deezer
+      let title = songName;
+      let artists = artistName;
+      try {
+        const trackInfo = await callDeezerApi(`https://api.deezer.com/track/${trackId}`);
+        if (!title) title = trackInfo?.title || '';
+        if (!artists) artists = trackInfo?.artist?.name || '';
+      } catch (_) {
+        // ignore if fails
+      }
+      // Construct a YouTube search query for the download. Do not append
+      // additional qualifiers such as "official audio" so that the search
+      // results remain broad; downloads were working correctly before and
+      // should continue to do so.
+      const searchQuery = `ytsearch1:${title || trackId} ${artists || ''}`;
+      // Initialize progress entry
+      downloadProgress.delete(downloadId);
+      downloadProgress.set(downloadId, { progress: 0, filePath: null, complete: false, proc: null });
+      // Spawn yt-dlp to download audio as mp3
+      const args = [
+        searchQuery,
+        '--no-playlist',
+        '-x',
+        '--audio-format','mp3',
+        '--audio-quality','0',
+        '-o', filePath,
+        '--no-check-certificate',
+        '--no-warnings',
+        '--prefer-free-formats'
+      ];
+      const proc = spawn(ytDlpPath, args, { windowsHide: true });
+      downloadProgress.get(downloadId).proc = proc;
+      proc.stderr.on('data', (data) => {
+        const line = data.toString();
+        const match = line.match(/\[download\]\s+(\d+(?:\.\d+)?)%/);
+        if (match) {
+          const pct = parseFloat(match[1]);
+          const entry = downloadProgress.get(downloadId);
+          if (entry) {
+            entry.progress = pct;
+          }
+        }
+      });
+      proc.on('close', (code) => {
+        const entry = downloadProgress.get(downloadId);
+        if (!entry) return;
+        if (code === 0) {
+          entry.progress = 100;
+          entry.complete = true;
+          entry.filePath = filePath;
+        } else {
+          entry.error = true;
+        }
+      });
+      proc.on('error', () => {
+        const entry = downloadProgress.get(downloadId);
+        if (entry) {
+          entry.error = true;
+        }
+      });
+      return res.json({ success: true, downloadId, filePath });
+    } catch (err) {
+      console.error('[Download] Error:', err.message);
+      res.status(500).json({ error: err.message || 'Download failed' });
+    }
+  });
+
+  // Download progress
+  app.get('/api/music/download/progress/:id', (req, res) => {
+    const id = req.params.id;
+    const entry = downloadProgress.get(id);
+    if (!entry) {
+      return res.json({ progress: 0, complete: false });
+    }
+    return res.json({
+      progress: entry.progress || 0,
+      filePath: entry.filePath || null,
+      complete: !!entry.complete,
+      error: !!entry.error
+    });
+  });
+
+  // Cancel download
+  app.post('/api/music/download/cancel', (req, res) => {
+    const { downloadId } = req.body || {};
+    const entry = downloadProgress.get(downloadId);
+    if (entry && entry.proc) {
+      try {
+        entry.proc.kill('SIGKILL');
+      } catch (_) {}
+      downloadProgress.delete(downloadId);
+    }
+    return res.json({ success: true });
+  });
+
+  // Delete downloaded file
+  app.post('/api/music/delete', (req, res) => {
+    const { filePath } = req.body || {};
+    if (!filePath) {
+      return res.status(400).json({ error: 'Missing filePath' });
+    }
+    try {
+      fs.unlinkSync(filePath);
+      return res.json({ success: true });
+    } catch (err) {
+      return res.status(500).json({ error: err.message || 'Delete failed' });
+    }
+  });
+
+  // Serve downloaded file with Range support
+  app.get('/api/music/serve/:encodedPath', (req, res) => {
+    let filePath;
+    try {
+      filePath = decodeURIComponent(req.params.encodedPath);
+    } catch (_) {
+      filePath = req.params.encodedPath;
+    }
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).send('File not found');
+    }
+    const stat = fs.statSync(filePath);
+    const total = stat.size;
+    const range = req.headers.range;
+    if (range) {
+      const parts = range.replace(/bytes=/, '').split('-');
+      const start = parseInt(parts[0], 10);
+      const end = parts[1] ? parseInt(parts[1], 10) : total - 1;
+      const chunkSize = (end - start) + 1;
+      const stream = fs.createReadStream(filePath, { start, end });
+      res.writeHead(206, {
+        'Content-Range': `bytes ${start}-${end}/${total}`,
+        'Accept-Ranges': 'bytes',
+        'Content-Length': chunkSize,
+        'Content-Type': 'audio/mpeg'
+      });
+      stream.pipe(res);
+    } else {
+      res.writeHead(200, {
+        'Content-Length': total,
+        'Content-Type': 'audio/mpeg',
+        'Accept-Ranges': 'bytes'
+      });
+      fs.createReadStream(filePath).pipe(res);
+    }
+  });
+
+  // Batch existence check (supports POST and GET)
+  app.all('/api/music/exists-batch', (req, res) => {
+    let filePaths = [];
+    if (req.method === 'POST' && req.body) {
+      if (Array.isArray(req.body.filePaths)) {
+        filePaths = req.body.filePaths;
+      } else if (Array.isArray(req.body.paths)) {
+        filePaths = req.body.paths;
+      } else if (typeof req.body.filePaths === 'string') {
+        filePaths = [req.body.filePaths];
+      }
+    }
+    if (filePaths.length === 0) {
+      const { paths } = req.query;
+      if (paths) {
+        filePaths = Array.isArray(paths) ? paths : String(paths).split(',');
+      }
+    }
+    const results = {};
+    filePaths.forEach((p) => {
+      const decoded = decodeURIComponent(p);
+      try {
+        results[p] = fs.existsSync(decoded);
+      } catch (_) {
+        results[p] = false;
+      }
+    });
+    return res.json({ results });
+  });
+
+  // Health check
+  app.get('/api/health', (_req, res) => {
+    res.json({
+      success: true,
+      ffmpegPath: ffmpegInstaller.path,
+      ytDlpLoaded: !!ytDlpPath,
+      cacheSize: urlCache.size
+    });
+  });
+}
+// ======================= END MUSIC API =======================
+
 
 process.on('unhandledRejection', (reason) => {
     try {
@@ -5790,4 +6472,8 @@ process.on('uncaughtException', (err) => {
 
 
 // Export the function to register routes instead of starting a server
-module.exports = { registerApiRoutes };
+module.exports = {
+  registerApiRoutes,
+  registerMusicApi,
+  initMusicDeps
+};

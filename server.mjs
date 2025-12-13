@@ -18,7 +18,7 @@ import ffmpegPath from 'ffmpeg-static';
 
 // Import the CommonJS api.cjs module
 const require = createRequire(import.meta.url);
-const { registerApiRoutes } = require('./api.cjs');
+const { registerApiRoutes, registerMusicApi, initMusicDeps } = require('./api.cjs');
 
 
 
@@ -345,7 +345,8 @@ export function startServer(userDataPath, executablePath = null) {
     console.log('📦 Registering API routes from api.js...');
     registerApiRoutes(app);
     console.log('✅ API routes registered successfully');
-    
+    initMusicDeps();
+    registerMusicApi(app);
     // Simple playback resume storage in userData
     const RESUME_PATH = path.join(userDataPath, 'playback_positions.json');
     function readResumeMap() {
