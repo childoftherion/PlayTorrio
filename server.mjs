@@ -14,6 +14,7 @@ import crypto from 'crypto';
 import { createRequire } from 'module';
 import { spawn, execSync } from 'child_process';
 import ffmpegPath from 'ffmpeg-static';
+import parseTorrent from 'parse-torrent';
 
 
 // Import the CommonJS api.cjs module
@@ -4430,6 +4431,62 @@ for (let i = 0; i < 10; i++) {
         }
     });
 
+    app.get('/api/resolve-torrent-file', async (req, res) => {
+        const { url, title } = req.query;
+
+        if (!url || !url.startsWith('http')) {
+            return res.status(400).json({ error: 'Invalid URL provided.' });
+        }
+
+        try {
+            const response = await fetch(url, {
+                redirect: 'manual' // 🔑 IMPORTANT
+            });
+
+            // 🔹 Case 1: Jackett redirects to magnet
+            const location = response.headers.get('location');
+            if (location && location.startsWith('magnet:')) {
+                return res.json({ magnet: location });
+            }
+
+            // 🔹 Case 2: Response body itself is magnet
+            const contentType = response.headers.get('content-type') || '';
+            if (contentType.includes('text/plain')) {
+                const text = await response.text();
+                if (text.startsWith('magnet:')) {
+                    return res.json({ magnet: text.trim() });
+                }
+            }
+
+            // 🔹 Case 3: Real .torrent file
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
+            }
+
+            const buffer = await response.buffer();
+            const parsed = parseTorrent(buffer);
+
+            if (!parsed?.infoHash) {
+                throw new Error('Failed to parse infoHash');
+            }
+
+            const magnet = parseTorrent.toMagnetURI(parsed, {
+                name: title
+            });
+
+            res.json({ magnet });
+
+        } catch (err) {
+            console.error('[resolve-torrent-file]', err);
+            res.status(500).json({
+                error: 'Failed to resolve torrent',
+                details: err.message
+            });
+        }
+    });
+
+
+
     app.get('/api/torrents', async (req, res) => {
         const { q: query, page } = req.query;
         if (!query) return res.status(400).json({ error: 'Missing query' });
@@ -4493,8 +4550,23 @@ for (let i = 0; i < 10; i++) {
             const torrents = (Array.isArray(items) ? items : [items])
                 .map(item => {
                     if (!item || (!item.link && !item.guid)) return null;
-                    const magnet = item.link?.startsWith('magnet:') ? item.link : item.guid;
-                    if (!magnet || !magnet.startsWith('magnet:')) return null;
+                    
+                    let magnet = null;
+                    let torrentFileUrl = null;
+
+                    if (item.link?.startsWith('magnet:')) {
+                        magnet = item.link;
+                    } else if (item.guid?.startsWith('magnet:')) {
+                        magnet = item.guid;
+                    } else if (item.link?.startsWith('http')) {
+                        torrentFileUrl = item.link;
+                    } else if (item.guid?.startsWith('http')) {
+                        torrentFileUrl = item.guid;
+                    }
+
+                    if (!magnet && !torrentFileUrl) {
+                        return null;
+                    }
                     
                     // Check for adult categories
                     const attrs = Array.isArray(item['torznab:attr']) ? item['torznab:attr'] : [item['torznab:attr']];
@@ -4515,7 +4587,7 @@ for (let i = 0; i < 10; i++) {
                     }
                     
                     const seeders = attrs.find(attr => attr?.name === 'seeders')?.value || 0;
-                    return { title: item.title, magnet, seeders: +seeders, size: +(item.enclosure?.length || 0) };
+                    return { title: item.title, magnet, torrentFileUrl, seeders: +seeders, size: +(item.enclosure?.length || 0) };
                 })
                 .filter(Boolean);
             res.json(torrents);

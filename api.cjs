@@ -83,6 +83,98 @@ function createAxiosInstance() {
 }
 
 // ============================================================================
+// PHOENIX LIVE TV SERVICE
+// ============================================================================
+app.get('/api/phoenix/stream/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        if (!id) {
+            return res.status(400).json({ error: 'Match ID is required.' });
+        }
+        
+        console.log(`[PHOENIX] Received match ID: "${id}"`);
+        const watchUrl = `https://ntvstream.cx/watch/phoenix/${id}`;
+        const axiosInstance = createAxiosInstance();
+
+        // 1. Fetch Watch Page
+        console.log(`[PHOENIX] Fetching watch page: ${watchUrl}`);
+        const watchPageResponse = await axiosInstance.get(watchUrl);
+        const $watch = cheerio.load(watchPageResponse.data);
+
+        // 2. Extract Final Stream URL from embedCodeTextarea
+        let finalUrl = '';
+        const embedCodeTextarea = $watch('textarea#embedCodeTextarea');
+        const embedCode = embedCodeTextarea.val(); // Get the value (content) of the textarea
+
+        if (embedCode) {
+            // The content of the textarea is HTML, so we can parse it to find the iframe
+            const iframeMatch = embedCode.match(/<iframe[^>]+src="([^"]+)"/);
+            if (iframeMatch && iframeMatch[1]) {
+                finalUrl = iframeMatch[1];
+            }
+        }
+        
+        if (!finalUrl) {
+            console.error(`[PHOENIX] Could not find embed code textarea or iframe src in ${watchUrl}`);
+            return res.status(404).json({ error: 'Stream embed code not found on watch page.' });
+        }
+
+        console.log(`[PHOENIX] Resolved stream URL: ${finalUrl}`);
+        res.json({ streamUrl: finalUrl });
+
+    } catch (error) {
+        console.error('[PHOENIX] Error:', error.message);
+        res.status(500).json({ error: 'Failed to resolve Phoenix stream.', message: error.message });
+    }
+});
+
+// ============================================================================
+// TITAN LIVE TV SERVICE
+// ============================================================================
+app.get('/api/titan/stream/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        if (!id) {
+            return res.status(400).json({ error: 'Match ID is required.' });
+        }
+        
+        console.log(`[TITAN] Received match ID: "${id}"`);
+        const watchUrl = `https://ntvstream.cx/watch/titan/${id}`;
+        const axiosInstance = createAxiosInstance();
+
+        // 1. Fetch Watch Page
+        console.log(`[TITAN] Fetching watch page: ${watchUrl}`);
+        const watchPageResponse = await axiosInstance.get(watchUrl);
+        const $watch = cheerio.load(watchPageResponse.data);
+
+        // 2. Extract Final Stream URL from embedCodeTextarea
+        let finalUrl = '';
+        const embedCodeTextarea = $watch('textarea#embedCodeTextarea');
+        const embedCode = embedCodeTextarea.val(); // Get the value (content) of the textarea
+
+        if (embedCode) {
+            // The content of the textarea is HTML, so we can parse it to find the iframe
+            const iframeMatch = embedCode.match(/<iframe[^>]+src="([^"]+)"/);
+            if (iframeMatch && iframeMatch[1]) {
+                finalUrl = iframeMatch[1];
+            }
+        }
+        
+        if (!finalUrl) {
+            console.error(`[TITAN] Could not find embed code textarea or iframe src in ${watchUrl}`);
+            return res.status(404).json({ error: 'Stream embed code not found on watch page.' });
+        }
+
+        console.log(`[TITAN] Resolved stream URL: ${finalUrl}`);
+        res.json({ streamUrl: finalUrl });
+
+    } catch (error) {
+        console.error('[TITAN] Error:', error.message);
+        res.status(500).json({ error: 'Failed to resolve Titan stream.', message: error.message });
+    }
+});
+
+// ============================================================================
 // GAMES SERVICE (Steam Underground scraper)
 // ============================================================================
 
@@ -1914,11 +2006,11 @@ app.get('/api/xdmovies/:tmdbid', async (req, res) => {
 // ============================================================================
 
 const ZLIB_DOMAINS = [
+    'z-lib.gd',
     'z-lib.io',
     'zlibrary-global.se',
     'booksc.org',       
     '1lib.sk',      
-    'z-lib.gd',
     'z-library.sk',
     'zlibrary.to',
     'z-lib.fm',
@@ -3764,6 +3856,12 @@ app.get('/api/realm/:anilistId/:episodeNumber', async (req, res) => {
     }
     
     try {
+        // List of Realm providers to query for sources.  In addition to the
+        // default providers, include additional providers as requested.  These
+        // providers use the same Realm API and support streams (and, for some
+        // sources, subtitles) in the same format as zencloud.  We leave
+        // existing providers unchanged and append new entries here to avoid
+        // breaking upstream behaviour.
         const providers = [
             'allmanga',
             'animez',
@@ -3771,7 +3869,12 @@ app.get('/api/realm/:anilistId/:episodeNumber', async (req, res) => {
             'zencloud',
             'animepahe-dub',
             'allmanga-dub',
-            'hanime-tv'
+            'hanime-tv',
+            // Additional providers added per user request
+            'kickassanime',
+            'animekai',
+            'animekai-dub',
+            'anizone'
         ];
         
         const results = {};

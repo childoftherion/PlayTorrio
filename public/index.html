@@ -9686,6 +9686,16 @@
             <!-- Category Selector and Search -->
             <div class="trakt-card">
                 <div class="trakt-card-body">
+                    <div class="livetv-category-section" style="display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; margin-bottom: 1rem;">
+                        <div id="livetv-source-buttons" style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+                            <button class="provider-btn active" data-source="kobra">Kobra</button>
+                            <button class="provider-btn" data-source="phoenix">Phoenix</button>
+                            <button class="provider-btn" data-source="titan">Titan</button>
+                            <button class="provider-btn" data-source="raptor">Raptor</button>
+                            <button class="provider-btn" data-source="scorpion">Scorpion</button>
+                            <button class="provider-btn" data-source="viper">Viper</button>
+                        </div>
+                    </div>
                     <div class="livetv-category-section" style="display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;">
                         <div>
                             <label for="livetv-category-select" class="livetv-category-label">
@@ -16322,241 +16332,11 @@ Your browser does not support the video tag.
             
             if (!categorySelect) return;
             
-            try {
-                // Show loading
-                if (empty) {
-                    empty.style.display = '';
-                    empty.innerHTML = '<div class="livetv-loading"><i class="fas fa-spinner"></i><p>Loading sports...</p></div>';
-                }
-                if (grid) grid.innerHTML = '';
-                
-                // Fetch available sports from watchfooty.st
-                console.log('[LiveTV] Fetching sports from API...');
-                const sportsResponse = await fetch('https://api.watchfooty.st/api/v1/sports');
-                
-                if (!sportsResponse.ok) {
-                    throw new Error(`API returned ${sportsResponse.status}: ${sportsResponse.statusText}`);
-                }
-                
-                const sportsData = await sportsResponse.json();
-                console.log('[LiveTV] Received sports:', sportsData);
-                
-                if (!Array.isArray(sportsData) || sportsData.length === 0) {
-                    throw new Error('No sports data received from API');
-                }
-                
-                // Store sports and populate dropdown
-                liveTvCategories = sportsData.map(s => s.name);
-                console.log('[LiveTV] Available categories:', liveTvCategories);
-                
-                categorySelect.innerHTML = '';
-                sportsData.forEach(sport => {
-                    const option = document.createElement('option');
-                    option.value = sport.name;
-                    const icons = {
-                        'football': '⚽',
-                        'soccer': '⚽',
-                        'tennis': '🎾',
-                        'basketball': '🏀',
-                        'hockey': '🏒',
-                        'baseball': '⚾',
-                        'rugby': '🏉',
-                        'cricket': '🏏',
-                        'motorsport': '🏎️',
-                        'motor-sport': '🏎️',
-                        'golf': '⛳',
-                        'boxing': '🥊',
-                        'mma': '🥋',
-                        'ufc': '🥋',
-                        'fighting': '🥋',
-                        'other': '📺'
-                    };
-                    const icon = icons[sport.name.toLowerCase()] || '📺';
-                    option.textContent = `${icon} ${sport.displayName}`;
-                    categorySelect.appendChild(option);
-                });
-                
-                console.log('[LiveTV] Populated dropdown with', sportsData.length, 'sports');
-                console.log('[LiveTV] Sports list:', liveTvCategories);
-                
-                // Set default to football if available
-                if (liveTvCategories.includes('football')) {
-                    categorySelect.value = 'football';
-                    console.log('[LiveTV] Default sport set to: football');
-                } else if (liveTvCategories.length > 0) {
-                    categorySelect.value = liveTvCategories[0];
-                    console.log('[LiveTV] Default sport set to:', liveTvCategories[0]);
-                }
-                
-                // Load matches for default category
-                console.log('[LiveTV] Loading matches for:', categorySelect.value);
-                await loadLiveTvMatches(categorySelect.value);
-            } catch (error) {
-                console.error('[LiveTV] Error during initialization:', error);
-                if (empty) {
-                    empty.style.display = '';
-                    empty.innerHTML = `<i class="fas fa-exclamation-triangle" style="font-size: 3em; opacity: 0.3; color: #ef4444;"></i><p>Failed to load Live TV: ${error.message}</p><p style="font-size: 0.9em; opacity: 0.7;">Check console for details</p>`;
-                }
-            }
+            // Default to Kobra
+            fetchMatches('kobra');
         }
         
-        async function loadLiveTvMatches(category) {
-            const grid = document.getElementById('livetv-grid');
-            const empty = document.getElementById('livetv-empty');
-            const searchInput = document.getElementById('livetv-search-input');
-            
-            if (!grid || !empty) return;
-            
-            try {
-                // Show loading
-                empty.style.display = '';
-                empty.innerHTML = '<div class="livetv-loading"><i class="fas fa-spinner"></i><p>Loading matches...</p></div>';
-                grid.innerHTML = '';
-                
-                // Fetch matches for the selected sport
-                console.log(`[LiveTV] Fetching matches for category: ${category}`);
-                const response = await fetch(`https://api.watchfooty.st/api/v1/matches/${category}`);
-                if (!response.ok) {
-                    throw new Error(`API returned ${response.status}: ${response.statusText}`);
-                }
-                liveTvMatches = await response.json();
-                console.log(`[LiveTV] Received ${liveTvMatches.length} matches for ${category}`);
-                
-                // Get search query
-                const searchQuery = searchInput ? searchInput.value.trim().toLowerCase() : '';
-                
-                // Apply search filter if query exists
-                let filtered = liveTvMatches;
-                if (searchQuery) {
-                    filtered = filtered.filter(m => {
-                        const title = (m.title || '').toLowerCase();
-                        const league = (m.league || '').toLowerCase();
-                        const homeTeam = (m.teams?.home?.name || '').toLowerCase();
-                        const awayTeam = (m.teams?.away?.name || '').toLowerCase();
-                        return title.includes(searchQuery) || league.includes(searchQuery) || 
-                               homeTeam.includes(searchQuery) || awayTeam.includes(searchQuery);
-                    });
-                    console.log(`[LiveTV] Filtered to ${filtered.length} matches matching "${searchQuery}"`);
-                }
-                
-                // Sort matches: Live first, then upcoming, then finished
-                // Status values: 'in' = live, 'pre' = upcoming, 'post' = finished
-                filtered.sort((a, b) => {
-                    const statusPriority = { 'in': 0, 'pre': 1, 'post': 2 };
-                    const aPriority = statusPriority[a.status] ?? 3;
-                    const bPriority = statusPriority[b.status] ?? 3;
-                    if (aPriority !== bPriority) return aPriority - bPriority;
-                    // If same status, sort by timestamp (earlier first)
-                    return (a.timestamp || 0) - (b.timestamp || 0);
-                });
-                
-                if (filtered.length === 0) {
-                    grid.innerHTML = '';
-                    empty.style.display = '';
-                    if (searchQuery) {
-                        empty.innerHTML = `<i class="fas fa-search" style="font-size: 3em; opacity: 0.3;"></i><p>No matches found for "${searchQuery}"</p>`;
-                    } else {
-                        empty.innerHTML = `<i class="fas fa-tv" style="font-size: 3em; opacity: 0.3;"></i><p>No matches available for ${category}</p>`;
-                    }
-                    console.log('[LiveTV] No matches to display');
-                    return;
-                }
-                
-                empty.style.display = 'none';
-                grid.innerHTML = '';
-                
-                // Count matches by status
-                const liveMatchCount = filtered.filter(m => m.status === 'in').length;
-                const upcomingMatchCount = filtered.filter(m => m.status === 'pre').length;
-                const finishedMatchCount = filtered.filter(m => m.status === 'post').length;
-                console.log(`[LiveTV] Match breakdown: ${liveMatchCount} live, ${upcomingMatchCount} upcoming, ${finishedMatchCount} finished`);
-                console.log('[LiveTV] Rendering match grid...');
-                
-                // Count live matches and update the count display
-                const liveCount = filtered.filter(m => m.status === 'in').length;
-                const upcomingCount = filtered.filter(m => m.status === 'pre').length;
-                
-                // Update the match count display next to dropdown
-                const countDisplay = document.getElementById('livetv-match-count');
-                if (countDisplay && (liveCount > 0 || upcomingCount > 0)) {
-                    let countText = '';
-                    if (liveCount > 0) {
-                        countText += `<span style="display: inline-flex; align-items: center; gap: 0.4rem; color: #ef4444; font-weight: 600; letter-spacing: 0.5px;"><i class="fas fa-circle" style="font-size: 0.4rem; animation: blink 1s infinite;"></i>${liveCount} LIVE</span>`;
-                    }
-                    if (upcomingCount > 0) {
-                        if (countText) countText += '<span style="color: rgba(255,255,255,0.3); font-weight: 300;">•</span>';
-                        countText += `<span style="display: inline-flex; align-items: center; gap: 0.4rem; color: #60a5fa; font-weight: 500;"><i class="far fa-clock" style="font-size: 0.75rem;"></i>${upcomingCount} Upcoming</span>`;
-                    }
-                    countDisplay.innerHTML = countText;
-                    countDisplay.style.display = 'inline-flex';
-                } else if (countDisplay) {
-                    countDisplay.style.display = 'none';
-                }
-                
-                // Render match cards
-                filtered.forEach(match => {
-                    const card = document.createElement('div');
-                    card.className = 'livetv-match-card';
-                    
-                    // Use watchfooty poster or fallback
-                    const posterUrl = match.poster ? `https://api.watchfooty.st${match.poster}` : '';
-                    const posterHTML = posterUrl 
-                        ? `<img loading="lazy" src="${posterUrl}" alt="${match.title}" class="livetv-poster" onerror="this.parentElement.querySelector('.livetv-poster-placeholder').style.display='flex'; this.style.display='none';">
-                           <div class="livetv-poster-placeholder" style="display:none;"><i class="fas fa-play-circle"></i></div>`
-                        : `<div class="livetv-poster-placeholder"><i class="fas fa-play-circle"></i></div>`;
-                    
-                    // Format match status and time
-                    const matchDate = new Date(match.date);
-                    const timeStr = matchDate.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
-                    
-                    // Status badge with better colors
-                    let statusBadge = '';
-                    if (match.status === 'in') {
-                        // Live match - red pulsing badge
-                        const minute = match.currentMinute || 'LIVE';
-                        statusBadge = `<span style="background: linear-gradient(135deg, #ef4444, #dc2626); color: #fff; padding: 0.25rem 0.5rem; border-radius: 4px; font-size: 0.75rem; font-weight: 700; animation: pulse 2s infinite; box-shadow: 0 0 10px rgba(239,68,68,0.5);"><i class="fas fa-circle" style="font-size: 0.5rem; margin-right: 0.25rem; animation: blink 1s infinite;"></i>${minute}</span>`;
-                    } else if (match.status === 'pre') {
-                        // Upcoming match
-                        statusBadge = `<span style="background: rgba(59,130,246,0.2); color: #3b82f6; padding: 0.25rem 0.5rem; border-radius: 4px; font-size: 0.75rem; font-weight: 600; border: 1px solid rgba(59,130,246,0.3);">UPCOMING</span>`;
-                    } else if (match.status === 'post') {
-                        // Finished match
-                        statusBadge = `<span style="background: rgba(107,114,128,0.2); color: #9ca3af; padding: 0.25rem 0.5rem; border-radius: 4px; font-size: 0.75rem; font-weight: 600;">FINISHED</span>`;
-                    }
-                    
-                    const scoreBadge = (match.scores?.home !== undefined && match.scores?.away !== undefined) 
-                        ? `<span style="background: rgba(16,185,129,0.2); color: #10b981; padding: 0.25rem 0.5rem; border-radius: 4px; font-size: 0.75rem; font-weight: 700; border: 1px solid rgba(16,185,129,0.3);">${match.scores.home} - ${match.scores.away}</span>` 
-                        : '';
-                    
-                    card.innerHTML = `
-                        ${posterHTML}
-                        <div class="livetv-match-info">
-                            <h4 class="livetv-match-title">${match.title}</h4>
-                            <div style="display: flex; gap: 0.5rem; align-items: center; margin-top: 0.5rem; flex-wrap: wrap;">
-                                <span class="livetv-match-category">${match.league || match.sport}</span>
-                                ${statusBadge}
-                                ${scoreBadge}
-                            </div>
-                            <div style="font-size: 0.85rem; color: rgba(255,255,255,0.6); margin-top: 0.25rem;">
-                                <i class="fas fa-clock"></i> ${timeStr}
-                            </div>
-                            <button class="livetv-watch-btn">
-                                <i class="fas fa-play"></i> Watch Now (${match.streams?.length || 0} streams)
-                            </button>
-                        </div>
-                    `;
-                    
-                    const watchBtn = card.querySelector('.livetv-watch-btn');
-                    watchBtn.addEventListener('click', () => openStreamsModal(match));
-                    
-                    grid.appendChild(card);
-                });
-            } catch (error) {
-                console.error('Error loading matches:', error);
-                grid.innerHTML = '';
-                empty.style.display = '';
-                empty.innerHTML = '<i class="fas fa-exclamation-triangle" style="font-size: 3em; opacity: 0.3; color: #ef4444;"></i><p>Failed to load matches. Please try again.</p>';
-            }
-        }
+
         
         async function openStreamsModal(match) {
             const modal = document.getElementById('livetv-streams-modal');
@@ -26100,8 +25880,28 @@ async function fetchMovieBoxStreams(season = null, episode = null) {
                     </div>
                 `;
 
-                item.querySelector('.btn-play').addEventListener('click', () => startStream(torrent.magnet));
-                item.querySelector('.btn-copy').addEventListener('click', () => copyMagnet(torrent.magnet));
+                const playButton = item.querySelector('.btn-play');
+                if (playButton) {
+                    if (torrent.magnet) {
+                        playButton.addEventListener('click', () => startStream(torrent.magnet));
+                    } else if (torrent.torrentFileUrl) {
+                        playButton.addEventListener('click', () => handleTorrentFileUrl(torrent));
+                    }
+                }
+                
+                const copyButton = item.querySelector('.btn-copy');
+                if(copyButton) {
+                    if (torrent.magnet) {
+                        copyButton.addEventListener('click', () => copyMagnet(torrent.magnet));
+                    } else if (torrent.torrentFileUrl) {
+                        copyButton.addEventListener('click', () => {
+                            navigator.clipboard.writeText(torrent.torrentFileUrl).then(() => {
+                                showNotification('Torrent file URL copied to clipboard');
+                            });
+                        });
+                    }
+                }
+
                 torrentsList.appendChild(item);
 
                 // Removed instant availability checks and badges
@@ -26166,6 +25966,27 @@ async function fetchMovieBoxStreams(season = null, episode = null) {
         }
 
         // Start streaming a torrent
+
+        async function handleTorrentFileUrl(torrent) {
+            if (!torrent || !torrent.torrentFileUrl) return;
+
+            showNotification('Resolving torrent file...', 'info');
+            try {
+                const response = await fetch(`${API_BASE_URL}/resolve-torrent-file?url=${encodeURIComponent(torrent.torrentFileUrl)}&title=${encodeURIComponent(torrent.title)}`);
+                const data = await response.json();
+
+                if (response.ok && data.magnet) {
+                    showNotification('Torrent resolved, starting stream...', 'success');
+                    await startStream(data.magnet);
+                } else {
+                    throw new Error(data.error || 'Failed to resolve torrent file');
+                }
+            } catch (error) {
+                console.error('Error resolving torrent file:', error);
+                showNotification(error.message, 'error');
+            }
+        }
+
         async function startStream(magnet) {
             // Refresh debrid flags before deciding path
             await ensureDebridState();
@@ -32266,6 +32087,322 @@ window.addEventListener("scroll", () => {
             </div>
         </div>
     </div>
+<script>
+    
+// Helper function to play a stream in a full-screen iframe viewer
+function playStreamInViewer(streamUrl) {
+    console.log('[LiveTV] Playing stream:', streamUrl);
+
+    const existingViewer = document.getElementById('livetv-stream-viewer');
+    if (existingViewer) {
+        existingViewer.remove();
+    }
+
+    const viewer = document.createElement('div');
+    viewer.id = 'livetv-stream-viewer';
+    viewer.style.cssText = `
+        position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: #000; z-index: 10000;
+        display: flex; flex-direction: column;
+    `;
+    
+    viewer.innerHTML = `
+        <button id="livetv-back-btn" style="
+            position: absolute; top: 15px; left: 15px; z-index: 10001;
+            background: rgba(0,0,0,0.6); color: #fff; border: 1px solid rgba(255,255,255,0.3);
+            border-radius: 50%; width: 40px; height: 40px; font-size: 1.2rem; cursor: pointer;
+        ">&times;</button>
+        <iframe src="${streamUrl}" style="
+            width: 100%; height: 100%; border: none; flex-grow: 1;
+        " allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen></iframe>
+    `;
+    
+    document.body.appendChild(viewer);
+
+    const closeModal = () => {
+        if (viewer) {
+            viewer.remove();
+            document.removeEventListener('keydown', handleEsc);
+        }
+    };
+
+    const backBtn = document.getElementById('livetv-back-btn');
+    backBtn.addEventListener('click', closeModal);
+
+    const handleEsc = (e) => {
+        if (e.key === 'Escape') {
+            closeModal();
+            console.log('[LiveTV] Stream viewer closed via ESC');
+        }
+    };
+    document.addEventListener('keydown', handleEsc);
+}
+
+const liveTvPage = document.getElementById('livetv-page');
+    const sourceButtonsContainer = document.getElementById('livetv-source-buttons');
+    const categorySelect = document.getElementById('livetv-category-select');
+    const livetvGrid = document.getElementById('livetv-grid');
+    const livetvEmpty = document.getElementById('livetv-empty');
+    const searchInput = document.getElementById('livetv-search-input');
+
+    let allMatches = [];
+    let currentSource = 'kobra';
+
+    async function fetchMatches(source) {
+        livetvGrid.innerHTML = '<div class="loading"><i class="fas fa-spinner"></i> Loading matches...</div>';
+        livetvEmpty.style.display = 'none';
+        try {
+            let apiUrl = '';
+            if (source === 'titan') {
+                apiUrl = `https://ntvstream.cx/api/get-matches?server=titan&type=both`;
+            } else {
+                apiUrl = `https://ntvstream.cx/api/get-matches?server=${source}&type=both`;
+            }
+
+            const response = await fetch(apiUrl);
+            const data = await response.json();
+            if (data.success) {
+                allMatches = data.all || [];
+                updateCategoryDropdown(data.categories);
+                displayMatches(source);
+            } else {
+                livetvGrid.innerHTML = '';
+                livetvEmpty.style.display = 'block';
+            }
+        } catch (error) {
+            console.error('Error fetching matches:', error);
+            livetvGrid.innerHTML = '';
+            livetvEmpty.style.display = 'block';
+            livetvEmpty.querySelector('p').textContent = 'Failed to load matches.';
+        }
+    }
+
+    function updateCategoryDropdown(categoryList) {
+        categorySelect.innerHTML = '<option value="all">All</option>';
+        if (categoryList && categoryList.length > 0) {
+            categoryList.forEach(category => {
+                const option = document.createElement('option');
+                option.value = category;
+                option.textContent = category;
+                categorySelect.appendChild(option);
+            });
+        }
+    }
+
+    function displayMatches(source, category = 'all', searchTerm = '') {
+        livetvGrid.innerHTML = '';
+        let filteredMatches = allMatches;
+
+        if (category !== 'all') {
+            filteredMatches = filteredMatches.filter(match => match.category.toLowerCase() === category.toLowerCase());
+        }
+
+        if (searchTerm) {
+            filteredMatches = filteredMatches.filter(match => match.title.toLowerCase().includes(searchTerm.toLowerCase()));
+        }
+
+        if (filteredMatches.length === 0) {
+            livetvEmpty.style.display = 'block';
+            return;
+        }
+
+        livetvEmpty.style.display = 'none';
+        filteredMatches.forEach(match => {
+            const card = document.createElement('div');
+            card.className = 'livetv-match-card';
+            
+            const poster = match.poster ? `<img src="https://ntvstream.cx${match.poster}" class="livetv-poster" alt="${match.title}">` : '<div class="livetv-poster-placeholder"><i class="fas fa-futbol"></i></div>';
+
+            card.innerHTML = `
+                ${poster}
+                <div class="livetv-match-info">
+                    <h4 class="livetv-match-title">${match.title}</h4>
+                    <span class="livetv-match-category">${match.category}</span>
+                    <button class="livetv-watch-btn">Watch Streams</button>
+                </div>
+            `;
+            livetvGrid.appendChild(card);
+
+            card.querySelector('.livetv-watch-btn').addEventListener('click', () => {
+                showStreamsModal(match, source);
+            });
+        });
+    }
+    
+    function getStreamUrl(source, stream) {
+        if (source === 'kobra') {
+            return `https://embedsports.top/embed/${stream.source}/${stream.id}/1`;
+        }
+        return stream.url;
+    }
+
+    function showStreamsModal(match, source) {
+        // TITAN PROVIDER LOGIC
+        // TITAN PROVIDER LOGIC
+        if (source === 'titan') {
+            console.log('[LiveTV] Titan provider detected. Resolving stream for match ID:', match.id);
+
+            const modal = document.getElementById('livetv-streams-modal');
+            const titleEl = document.getElementById('livetv-streams-title');
+            const listEl = document.getElementById('livetv-streams-list');
+            const closeBtn = document.getElementById('livetv-streams-close');
+            
+            titleEl.textContent = match.title;
+            listEl.innerHTML = '<div class="livetv-loading"><i class="fas fa-spinner"></i><p>Resolving Titan Stream...</p></div>';
+            modal.style.display = 'flex';
+
+            const closeModal = () => modal.style.display = 'none';
+            closeBtn.onclick = closeModal;
+            modal.onclick = (e) => {
+                if (e.target === modal) closeModal();
+            };
+
+            fetch(`/api/titan/stream/${match.id}`)
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error(`Server responded with status ${response.status}`);
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    const streamUrl = data.streamUrl;
+                    if (streamUrl) {
+                        modal.style.display = 'none'; // Hide loading modal
+                        playStreamInViewer(streamUrl); // Use the helper
+                    } else {
+                        throw new Error("Stream URL not found in backend response.");
+                    }
+                })
+                .catch(error => {
+                    console.error('[LiveTV] Error fetching Titan stream:', error);
+                    listEl.innerHTML = '<div class="livetv-empty"><p>Failed to resolve Titan stream. Please try again.</p></div>';
+                });
+
+            return; // End execution for titan
+        }
+        // PHOENIX PROVIDER LOGIC
+        if (source === 'phoenix') {
+            console.log('[LiveTV] Phoenix provider detected. Resolving stream for match ID:', match.id);
+
+            const modal = document.getElementById('livetv-streams-modal');
+            const titleEl = document.getElementById('livetv-streams-title');
+            const listEl = document.getElementById('livetv-streams-list');
+            const closeBtn = document.getElementById('livetv-streams-close');
+            
+            titleEl.textContent = match.title;
+            listEl.innerHTML = '<div class="livetv-loading"><i class="fas fa-spinner"></i><p>Resolving Phoenix Stream...</p></div>';
+            modal.style.display = 'flex';
+
+            const closeModal = () => modal.style.display = 'none';
+            closeBtn.onclick = closeModal;
+            modal.onclick = (e) => {
+                if (e.target === modal) closeModal();
+            };
+
+            fetch(`/api/phoenix/stream/${match.id}`)
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error(`Server responded with status ${response.status}`);
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    const streamUrl = data.streamUrl;
+                    if (streamUrl) {
+                        modal.style.display = 'none'; // Hide loading modal
+                        playStreamInViewer(streamUrl); // Use the helper
+                    } else {
+                        throw new Error("Stream URL not found in backend response.");
+                    }
+                })
+                .catch(error => {
+                    console.error('[LiveTV] Error fetching Phoenix stream:', error);
+                    listEl.innerHTML = '<div class="livetv-empty"><p>Failed to resolve Phoenix stream. Please try again.</p></div>';
+                });
+
+            return; // End execution for phoenix
+        }
+
+        // DEFAULT LOGIC FOR OTHER PROVIDERS
+        const modal = document.getElementById('livetv-streams-modal');
+        const titleEl = document.getElementById('livetv-streams-title');
+        const listEl = document.getElementById('livetv-streams-list');
+        const closeBtn = document.getElementById('livetv-streams-close');
+
+        titleEl.textContent = match.title;
+        listEl.innerHTML = '';
+
+        if (match.sources && match.sources.length > 0) {
+            match.sources.forEach(stream => {
+                const streamItem = document.createElement('div');
+                streamItem.className = 'livetv-stream-item';
+                const streamUrl = getStreamUrl(source, stream);
+                streamItem.innerHTML = `
+                    <div class="livetv-stream-info">
+                        <span class="livetv-stream-source">${stream.channelName || stream.source}</span>
+                    </div>
+                    <div class="livetv-stream-actions">
+                        <button class="livetv-play-stream-btn" data-url="${streamUrl}"><i class="fas fa-play"></i> Play</button>
+                        <button class="livetv-copy-link-btn" data-url="${streamUrl}"><i class="fas fa-copy"></i> Copy Link</button>
+                    </div>
+                `;
+                listEl.appendChild(streamItem);
+            });
+        } else {
+            listEl.innerHTML = '<p>No streams available for this match.</p>';
+        }
+
+        modal.style.display = 'flex';
+
+        listEl.querySelectorAll('.livetv-play-stream-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const streamUrl = btn.getAttribute('data-url');
+                if (streamUrl) {
+                    modal.style.display = 'none';
+                    playStreamInViewer(streamUrl); // Use the helper function
+                }
+            });
+        });
+
+        listEl.querySelectorAll('.livetv-copy-link-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const url = btn.getAttribute('data-url');
+                navigator.clipboard.writeText(url).then(() => {
+                    showNotification('Stream link copied to clipboard!', 'success');
+                });
+            });
+        });
+
+        closeBtn.onclick = () => {
+            modal.style.display = 'none';
+        };
+    }
+    
+    sourceButtonsContainer.addEventListener('click', (e) => {
+        if (e.target.tagName === 'BUTTON') {
+            const source = e.target.getAttribute('data-source');
+            if (source && source !== currentSource) {
+                currentSource = source;
+                // Update active button
+                sourceButtonsContainer.querySelectorAll('button').forEach(btn => btn.classList.remove('active'));
+                e.target.classList.add('active');
+                fetchMatches(source);
+            }
+        }
+    });
+
+    categorySelect.addEventListener('change', () => {
+        displayMatches(currentSource, categorySelect.value, searchInput.value);
+    });
+
+    searchInput.addEventListener('input', () => {
+        displayMatches(currentSource, categorySelect.value, searchInput.value);
+    });
+
+    // Initial load
+    if (liveTvPage.style.display !== 'none') {
+        fetchMatches(currentSource);
+    }
+</script>
 </body>
 <script>
 // Add platform class to body for platform-specific styling

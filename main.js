@@ -1441,7 +1441,8 @@ function createWindow() {
             spellcheck: false,
             backgroundThrottling: true,
             // Use persistent partition to preserve localStorage/IndexedDB across updates
-            partition: 'persist:playtorrio'
+            partition: 'persist:playtorrio',
+            nativeWindowOpen: false
         },
         backgroundColor: '#120a1f',
     });
@@ -1455,26 +1456,27 @@ function createWindow() {
     });
 
     // Helper: allow-list for external reader/login domains
-    const ALLOWED_READER_HOSTS = new Set([
+    const ALLOWED_POPUP_HOSTS = new Set([
         'reader.z-lib.gd',
         'reader.z-library.sk',
-        'reader.z-lib.fm'
+        'reader.z-lib.fm',
+        'adfgetlink.net' // Allowed for Phoenix streams
     ]);
-    const isAllowedReaderDomain = (url) => {
+    const isAllowedDomain = (url) => {
         try {
             const { hostname } = new URL(url);
             const h = hostname.toLowerCase();
-            if (ALLOWED_READER_HOSTS.has(h)) return true;
+            if (ALLOWED_POPUP_HOSTS.has(h)) return true;
             // Allow SingleLogin for auth redirects if reader requires it
             if (h.includes('singlelogin')) return true;
             return false;
         } catch (_) { return false; }
     };
 
-    // Intercept new windows (target=_blank) and open allowed reader domains externally
+    // Intercept new windows (target=_blank) and open allowed domains externally
     win.webContents.setWindowOpenHandler(({ url }) => {
-        if (isAllowedReaderDomain(url)) {
-            console.log('[Books] Opening reader in external browser:', url);
+        if (isAllowedDomain(url)) {
+            console.log('[Popup] Opening allowed URL in external browser:', url);
             try { shell.openExternal(url); } catch(_) {}
             return { action: 'deny' };
         }
