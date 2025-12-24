@@ -11,6 +11,11 @@ contextBridge.exposeInMainWorld("electronAPI", {
   manifestWrite: (url) => ipcRenderer.invoke("manifestWrite", url),
   manifestRead: () => ipcRenderer.invoke("manifestRead"),
 
+  // Stremio Addons
+  addonInstall: (url) => ipcRenderer.invoke("addonInstall", url),
+  addonList: () => ipcRenderer.invoke("addonList"),
+  addonRemove: (id) => ipcRenderer.invoke("addonRemove", id),
+
   // Platform
   platform: process.platform,
 

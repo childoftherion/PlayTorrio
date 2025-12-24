@@ -7876,6 +7876,8 @@
             </button>
         </div>
         
+        
+
         <div class="settings-section">
             <h3>Jackett API Configuration</h3>
             <div class="current-api-key" id="currentApiKey">
@@ -8572,6 +8574,7 @@
             </div>
         </div>
         
+        <div id="addonCatalogsContainer" style="display: none; padding-bottom: 2rem;"></div>
         <div class="movies-grid" id="moviesGrid" style="content-visibility:auto; contain-intrinsic-size: 1000px 1000px;">
             <!-- Movie cards will be loaded here -->
         </div>
@@ -9261,6 +9264,7 @@
                 <button class="settings-tab" data-section="debrid">Debrid</button>
                 <button class="settings-tab" data-section="ui">User Interface</button>
                 <button class="settings-tab" data-section="trakt">Trakt Integration</button>
+                <button class="settings-tab" data-section="addons">Addon Manager</button>
                 <button class="settings-tab" data-section="aiostreams">AIOStreams</button>
             </div>
 
@@ -9487,6 +9491,37 @@
                                 </div>
                                 <div style="margin-top:0.25rem; color:#ffc107; font-size:0.9rem;">
                                     Get your API key from <a href="https://www.premiumize.me/account" target="_blank" style="color:#0d6efd; text-decoration:underline;">premiumize.me/account</a>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <!-- Addon Manager Section -->
+                <div id="addonsContent" class="settings-section">
+                    <div class="settings-card">
+                        <div class="settings-card-header">
+                            <h3><i class="fas fa-puzzle-piece" style="color: var(--vlc-orange);"></i> Addon Manager</h3>
+                        </div>
+                        <div class="settings-card-body">
+                            <div style="margin-bottom: 1rem; color: var(--secondary); font-size: 0.9rem;">
+                                <i class="fas fa-info-circle"></i> Install Stremio addons to expand content sources.
+                            </div>
+                            
+                            <div class="form-group">
+                                <label for="addonManifestUrl">Manifest URL:</label>
+                                <div style="display: flex; gap: 0.5rem;">
+                                    <input type="text" id="addonManifestUrl" placeholder="https://example.com/manifest.json" style="flex:1;" />
+                                    <button class="api-btn" id="installAddonBtn" style="background: var(--success); color: #fff;">
+                                        <i class="fas fa-plus"></i> Install
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div style="margin-top: 1rem;">
+                                <label style="display: block; margin-bottom: 0.5rem; font-weight: 600;">Installed Addons:</label>
+                                <div id="installedAddonsList" style="display: flex; flex-direction: column; gap: 0.5rem; max-height: 200px; overflow-y: auto;">
+                                    <!-- Addons will be injected here -->
+                                    <div style="text-align: center; color: var(--gray); padding: 1rem;">No addons installed</div>
                                 </div>
                             </div>
                         </div>
@@ -24250,8 +24285,8 @@ Your browser does not support the video tag.
             torrentsContainer.style.display = 'none';
             torrentsList.innerHTML = '';
 
-            modalBackdrop.src = `https://image.tmdb.org/t/p/w1280${movie.backdrop_path || movie.poster_path || ''}`;
-            modalPoster.src = `https://image.tmdb.org/t/p/w342${movie.poster_path || movie.backdrop_path || ''}`;
+            modalBackdrop.src = (movie.backdrop_path && movie.backdrop_path.startsWith('http')) ? movie.backdrop_path : `https://image.tmdb.org/t/p/w1280${movie.backdrop_path || movie.poster_path || ''}`;
+            modalPoster.src = (movie.poster_path && movie.poster_path.startsWith('http')) ? movie.poster_path : `https://image.tmdb.org/t/p/w342${movie.poster_path || movie.backdrop_path || ''}`;
             modalTitle.textContent = movie.title || movie.name || 'Untitled';
             modalRating.textContent = Number(movie.vote_average || 0).toFixed(1);
             modalYear.textContent = (movie.release_date || movie.first_air_date || '').substring(0, 4);
@@ -26532,7 +26567,48 @@ async function fetchMovieBoxStreams(season = null, episode = null) {
 
                 const playButton = item.querySelector('.btn-play');
                 if (playButton) {
-                    if (torrent.magnet) {
+                    if (torrent.streamUrl) {
+                         playButton.addEventListener('click', async (e) => {
+                             e.stopPropagation();
+                             try {
+                                 const tmdbId = currentContent?.id?.toString() || '';
+                                 let seasonNum = null;
+                                 let episodeNum = null;
+                                 
+                                 // Determine season/episode if TV show
+                                 if (currentMediaType === 'tv') {
+                                     if (lastSearchedSeason && lastSearchedEpisode) {
+                                         seasonNum = String(lastSearchedSeason);
+                                         episodeNum = String(lastSearchedEpisode);
+                                     } else if (currentSeason) {
+                                         // Fallback if lastSearched vars aren't set but currentSeason is
+                                         seasonNum = String(currentSeason);
+                                         // Try to parse episode from title if not explicit
+                                         const epMatch = (torrent.title || '').match(/[E|e](\d+)/);
+                                         if (epMatch) episodeNum = epMatch[1];
+                                     }
+                                 }
+
+                                 const res = await window.electronAPI.spawnMpvjsPlayer({
+                                     url: torrent.streamUrl,
+                                     tmdbId,
+                                     seasonNum,
+                                     episodeNum
+                                 });
+
+                                 if (res?.success) {
+                                     showNotification('Player launched');
+                                 } else if (res?.message) {
+                                     alert(res.message);
+                                 } else {
+                                     showNotification('Failed to launch MPV player');
+                                 }
+                             } catch (err) {
+                                 console.error('[Addon] Play Now error:', err);
+                                 showNotification('Failed to play: ' + (err?.message || 'Unknown error'));
+                             }
+                         });
+                    } else if (torrent.magnet) {
                         playButton.addEventListener('click', () => startStream(torrent.magnet));
                     } else if (torrent.torrentFileUrl) {
                         playButton.addEventListener('click', () => handleTorrentFileUrl(torrent));
@@ -26541,7 +26617,13 @@ async function fetchMovieBoxStreams(season = null, episode = null) {
                 
                 const copyButton = item.querySelector('.btn-copy');
                 if(copyButton) {
-                    if (torrent.magnet) {
+                    if (torrent.streamUrl) {
+                         copyButton.addEventListener('click', () => {
+                             navigator.clipboard.writeText(torrent.streamUrl).then(() => {
+                                 showNotification('Stream URL copied to clipboard');
+                             });
+                         });
+                    } else if (torrent.magnet) {
                         copyButton.addEventListener('click', () => copyMagnet(torrent.magnet));
                     } else if (torrent.torrentFileUrl) {
                         copyButton.addEventListener('click', () => {
@@ -33628,6 +33710,653 @@ document.addEventListener('DOMContentLoaded', () => {
 (function() {
     if (window.electronAPI && window.electronAPI.platform) {
         document.body.classList.add('platform-' + window.electronAPI.platform);
+    }
+})();
+</script>
+<script>
+(function() {
+    // --- Addon Manager State ---
+    let installedAddons = [];
+    
+    // --- Monkey Patch fetchTorrents ---
+    if (!window.originalFetchTorrents) {
+        window.originalFetchTorrents = window.fetchTorrents;
+    }
+
+    window.fetchTorrents = async function(season, episode) {
+        if (selectedProvider && selectedProvider.startsWith('addon:')) {
+            const addonId = selectedProvider.replace('addon:', '');
+            console.log('[Provider] Routing to Addon:', addonId);
+            return fetchAddonStreams(addonId, season, episode);
+        }
+        if (window.originalFetchTorrents) {
+            return window.originalFetchTorrents(season, episode);
+        }
+    };
+
+    // --- Init ---
+    window.loadAddons = async function() {
+        try {
+            const res = await window.electronAPI.addonList();
+            if (res.success) {
+                installedAddons = res.addons;
+                refreshProviderButtons();
+                updateSettingsList();
+            }
+        } catch (e) { console.error('Failed to load addons', e); }
+    };
+
+    document.addEventListener('DOMContentLoaded', async () => {
+        await window.loadAddons();
+        setupSettingsUI();
+    });
+
+    // --- UI: Provider Buttons ---
+    function refreshProviderButtons() {
+        const containers = document.querySelectorAll('.provider-buttons');
+        
+        containers.forEach(container => {
+            container.querySelectorAll('.addon-provider-btn').forEach(b => b.remove());
+
+            installedAddons.forEach(addon => {
+                if (addon.manifest.resources.some(r => r.name === 'stream' || r === 'stream')) {
+                    const btn = document.createElement('button');
+                    btn.className = 'provider-btn addon-provider-btn';
+                    btn.dataset.provider = `addon:${addon.manifest.id}`;
+                    btn.textContent = addon.manifest.name;
+                    btn.style.border = "1px solid var(--vlc-orange)";
+                    
+                    btn.addEventListener('click', () => {
+                         document.querySelectorAll('.provider-btn').forEach(b => b.classList.remove('active'));
+                         document.querySelectorAll(`.provider-btn[data-provider="addon:${addon.manifest.id}"]`).forEach(b => b.classList.add('active'));
+                         
+                         selectedProvider = btn.dataset.provider;
+                         console.log('[Provider] Switched to:', selectedProvider);
+                         
+                         const tl = document.getElementById('torrentsList');
+                         if(tl) tl.innerHTML = `<div class="loading"><i class="fas fa-spinner"></i> Searching ${addon.manifest.name}...</div>`;
+                         
+                         torrentsLoaded = false;
+                         window.fetchTorrents(lastSearchedSeason, lastSearchedEpisode);
+                    });
+                    
+                    container.appendChild(btn);
+                }
+            });
+        });
+    }
+
+    // --- UI: Settings ---
+    function setupSettingsUI() {
+        const installBtn = document.getElementById('installAddonBtn');
+        const input = document.getElementById('addonManifestUrl');
+        
+        if (installBtn && input) {
+            const newBtn = installBtn.cloneNode(true);
+            if (installBtn.parentNode) installBtn.parentNode.replaceChild(newBtn, installBtn);
+            
+            newBtn.addEventListener('click', async () => {
+                const url = input.value.trim();
+                if (!url) return;
+                
+                newBtn.disabled = true;
+                newBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+                
+                try {
+                    const res = await window.electronAPI.addonInstall(url);
+                    if (res.success) {
+                        input.value = '';
+                        await window.loadAddons();
+                        showNotification('Addon installed successfully!', 'success');
+                    } else {
+                        showNotification('Failed to install addon: ' + res.message, 'error');
+                    }
+                } catch (e) {
+                     showNotification('Error: ' + e.message, 'error');
+                } finally {
+                    newBtn.disabled = false;
+                    newBtn.innerHTML = '<i class="fas fa-plus"></i> Install';
+                }
+            });
+        }
+    }
+
+    function updateSettingsList() {
+        const list = document.getElementById('installedAddonsList');
+        if (!list) return;
+        
+        if (installedAddons.length === 0) {
+            list.innerHTML = '<div style="text-align: center; color: var(--gray); padding: 1rem;">No addons installed</div>';
+            return;
+        }
+        
+        list.innerHTML = '';
+        installedAddons.forEach(addon => {
+            const item = document.createElement('div');
+            item.style.cssText = 'display: flex; justify-content: space-between; align-items: center; padding: 0.75rem; background: rgba(255,255,255,0.05); border-radius: 6px;';
+            item.innerHTML = `
+                <div style="overflow:hidden;">
+                    <div style="font-weight: 600;">${addon.manifest.name} <span style="font-size: 0.8em; opacity: 0.7;">v${addon.manifest.version}</span></div>
+                    <div style="font-size: 0.85em; opacity: 0.7; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${addon.url}</div>
+                </div>
+                <button class="api-btn api-btn-secondary" style="padding: 0.4rem 0.6rem; font-size: 0.85rem; background: #dc3545; min-width: 32px;">
+                    <i class="fas fa-trash"></i>
+                </button>
+            `;
+            
+            item.querySelector('button').addEventListener('click', async () => {
+                if (confirm(`Uninstall ${addon.manifest.name}?`)) {
+                    await window.electronAPI.addonRemove(addon.manifest.id);
+                    await window.loadAddons();
+                }
+            });
+            
+            list.appendChild(item);
+        });
+    }
+
+    // --- Logic: Fetch Streams ---
+    async function fetchAddonStreams(addonId, season, episode) {
+        const addon = installedAddons.find(a => a.manifest.id === addonId);
+        if (!addon) return;
+        
+        try {
+            const type = (currentMediaType === 'movie') ? 'movie' : 'series';
+            let imdbId = '';
+            
+            if (currentContent.external_ids && currentContent.external_ids.imdb_id) {
+                imdbId = currentContent.external_ids.imdb_id;
+            } else {
+                 const mediaType = currentMediaType === 'movie' ? 'movie' : 'tv';
+                 const res = await fetch(`https://api.themoviedb.org/3/${mediaType}/${currentContent.id}/external_ids?api_key=${TMDB_API_KEY}`);
+                 const data = await res.json();
+                 imdbId = data.imdb_id;
+            }
+            
+            if (!imdbId) throw new Error('No IMDB ID found');
+            
+            let resourceId = imdbId;
+            if (type === 'series') {
+                if (!season || !episode) throw new Error('Season and Episode required');
+                resourceId = `${imdbId}:${season}:${episode}`;
+            }
+            
+            let url = addon.url.replace('/manifest.json', '');
+            if (url.endsWith('/')) url = url.slice(0, -1);
+            
+            const streamUrl = `${url}/stream/${type}/${resourceId}.json`;
+            console.log('[Addon] Fetching streams:', streamUrl);
+            
+            const res = await fetch(streamUrl);
+            const data = await res.json();
+            
+            if (!data.streams || data.streams.length === 0) {
+                 const tl = document.getElementById('torrentsList');
+                 if(tl) tl.innerHTML = '<p>No streams found from this addon.</p>';
+                 return;
+            }
+            
+            const torrents = data.streams.map(s => {
+                let title = s.title || s.name || (s.behaviorHints ? s.behaviorHints.filename : 'Stream');
+                title = title.split('\n')[0];
+                return {
+                    title: title,
+                    streamUrl: s.url, 
+                    magnet: s.url && s.url.startsWith('magnet:') ? s.url : (s.infoHash ? `magnet:?xt=urn:btih:${s.infoHash}` : null),
+                    seeders: 0, 
+                    size: 0 
+                };
+            });
+            
+            displayTorrents(torrents, season, episode);
+            
+        } catch (e) {
+            console.error('[Addon] Error:', e);
+            const tl = document.getElementById('torrentsList');
+            if(tl) tl.innerHTML = `<div class="error-message">Addon Error: ${e.message}</div>`;
+        }
+    }
+})();
+</script>
+<script>
+(function() {
+    let installedAddons = [];
+
+    const originalLoadAddons = window.loadAddons;
+    window.loadAddons = async function() {
+        const res = await window.electronAPI.addonList();
+        if (res.success) installedAddons = res.addons;
+        
+        if (originalLoadAddons) await originalLoadAddons();
+        refreshSearchSources();
+        renderAddonCatalogs();
+    };
+
+    function refreshSearchSources() {
+        const select = document.getElementById('searchSourceSelect');
+        if (!select) return;
+        
+        const defaultOpts = Array.from(select.options).filter(o => !o.value.startsWith('addon:'));
+        select.innerHTML = '';
+        defaultOpts.forEach(o => select.appendChild(o));
+        
+        installedAddons.forEach(addon => {
+            const hasSearch = addon.manifest.catalogs && addon.manifest.catalogs.some(c => 
+                c.extra && c.extra.some(e => e.name === 'search')
+            );
+            
+            if (hasSearch) {
+                const opt = document.createElement('option');
+                opt.value = `addon:${addon.manifest.id}`;
+                opt.textContent = addon.manifest.name;
+                select.appendChild(opt);
+            }
+        });
+    }
+
+    const originalSearchMovies = window.searchMovies;
+    window.searchMovies = async function(query) {
+        const source = document.getElementById('searchSourceSelect')?.value;
+        if (source && source.startsWith('addon:')) {
+            const addonId = source.replace('addon:', '');
+            return searchAddonCatalog(addonId, query);
+        }
+        if (originalSearchMovies) return originalSearchMovies(query);
+    };
+
+    async function searchAddonCatalog(addonId, query) {
+        const addon = installedAddons.find(a => a.manifest.id === addonId);
+        if (!addon) return;
+        
+        const catalog = addon.manifest.catalogs.find(c => 
+             c.extra && c.extra.some(e => e.name === 'search') && (c.type === 'movie' || c.type === 'series' || c.type === 'channel')
+        );
+        
+        if (!catalog) {
+            showNotification('This addon does not support search', 'error');
+            return;
+        }
+
+        const grid = document.getElementById('moviesGrid');
+        const loading = document.getElementById('loadingIndicator');
+        const sliders = document.getElementById('slidersContainer');
+        const hero = document.getElementById('heroSection');
+        const backBtn = document.getElementById('backToHomeBtn');
+        const catalogsContainer = document.getElementById('addonCatalogsContainer');
+
+        if (grid) grid.innerHTML = '';
+        if (grid) grid.style.display = 'grid';
+        if (loading) loading.style.display = 'block';
+        if (sliders) sliders.style.display = 'none';
+        if (hero) hero.style.display = 'none';
+        if (catalogsContainer) catalogsContainer.style.display = 'none';
+        if (backBtn) backBtn.style.display = 'block';
+        
+        isSearchMode = true;
+        lastSearchQuery = query;
+
+        try {
+            let url = addon.url.replace('/manifest.json', '');
+            if (url.endsWith('/')) url = url.slice(0, -1);
+            
+            const searchUrl = `${url}/catalog/${catalog.type}/${catalog.id}/search=${encodeURIComponent(query)}.json`;
+            console.log('[AddonSearch] Fetching:', searchUrl);
+            
+            const res = await fetch(searchUrl);
+            const data = await res.json();
+            
+            if (loading) loading.style.display = 'none';
+            
+            if (!data.metas || data.metas.length === 0) {
+                 if (grid) grid.innerHTML = '<div style="text-align:center; width:100%; grid-column:1/-1;">No results found</div>';
+                 return;
+            }
+            
+            lastSearchResults = data.metas;
+            renderStremioItems(data.metas, grid);
+            
+        } catch (e) {
+            console.error('[AddonSearch] Error:', e);
+            if (loading) loading.style.display = 'none';
+            showNotification('Search failed: ' + e.message, 'error');
+        }
+    }
+
+    async function renderAddonCatalogs() {
+        const container = document.getElementById('addonCatalogsContainer');
+        if (!container) return;
+        
+        container.innerHTML = '';
+        container.style.display = 'block';
+        
+        for (const addon of installedAddons) {
+             if (!addon.manifest.catalogs) continue;
+             
+             const catalogs = addon.manifest.catalogs.filter(c => !c.extraRequired && (c.type === 'movie' || c.type === 'series')).slice(0, 2);
+             
+             for (const cat of catalogs) {
+                 await renderCatalogSlider(addon, cat, container);
+             }
+        }
+    }
+
+    async function renderCatalogSlider(addon, catalog, container) {
+        const section = document.createElement('div');
+        section.className = 'slider-section';
+        section.innerHTML = `
+            <div class="slider-header">
+                <h2 class="slider-title">
+                    <i class="fas fa-puzzle-piece" style="color: var(--vlc-orange)"></i>
+                    ${addon.manifest.name} - ${catalog.name || catalog.type}
+                </h2>
+            </div>
+            <div class="slider-container">
+                <div class="slider-track" style="display:flex; gap:1rem; overflow-x:auto; padding:1rem 0;">
+                    <div class="loading"><i class="fas fa-spinner"></i></div>
+                </div>
+            </div>
+        `;
+        container.appendChild(section);
+        
+        const track = section.querySelector('.slider-track');
+        
+        try {
+            let url = addon.url.replace('/manifest.json', '');
+            if (url.endsWith('/')) url = url.slice(0, -1);
+            
+            const catUrl = `${url}/catalog/${catalog.type}/${catalog.id}.json`;
+            const res = await fetch(catUrl);
+            const data = await res.json();
+            
+            if (!data.metas || data.metas.length === 0) {
+                section.remove();
+                return;
+            }
+            
+            track.innerHTML = '';
+            renderStremioItems(data.metas.slice(0, 20), track, true);
+            
+        } catch (e) {
+            console.error('[AddonHome] Error loading catalog:', e);
+            section.remove();
+        }
+    }
+
+    function renderStremioItems(metas, container, isSlider = false) {
+        metas.forEach(meta => {
+            const card = document.createElement('div');
+            card.className = 'movie-card';
+            if (isSlider) card.style.minWidth = '200px';
+            
+            card.innerHTML = `
+                <img loading="lazy" src="${meta.poster}" class="movie-poster" onerror="this.src='img/no-poster.png'">
+                <div class="movie-info">
+                    <h3 class="movie-title">${meta.name}</h3>
+                    <p class="movie-year">${meta.year || meta.type}</p>
+                </div>
+            `;
+            
+            card.addEventListener('click', () => {
+                openStremioDetails(meta);
+            });
+            
+            container.appendChild(card);
+        });
+    }
+    
+    async function openStremioDetails(previewMeta) {
+        showNotification('Loading details...', 'info');
+        
+        let fullMeta = null;
+        
+        for (const addon of installedAddons) {
+            if (addon.manifest.resources.some(r => r.name === 'meta' || r === 'meta') &&
+                addon.manifest.types.includes(previewMeta.type)) {
+                    
+                if (addon.manifest.idPrefixes) {
+                    if (!addon.manifest.idPrefixes.some(p => previewMeta.id.startsWith(p))) continue;
+                }
+                
+                try {
+                    let url = addon.url.replace('/manifest.json', '');
+                    if (url.endsWith('/')) url = url.slice(0, -1);
+                    
+                    const metaUrl = `${url}/meta/${previewMeta.type}/${previewMeta.id}.json`;
+                    const res = await fetch(metaUrl);
+                    const data = await res.json();
+                    if (data.meta) {
+                        fullMeta = data.meta;
+                        break;
+                    }
+                } catch(e) {}
+            }
+        }
+        
+        if (!fullMeta) fullMeta = previewMeta;
+        
+        const fakeItem = {
+            id: fullMeta.id,
+            title: fullMeta.name,
+            original_title: fullMeta.name,
+            poster_path: fullMeta.poster, 
+            backdrop_path: fullMeta.background,
+            overview: fullMeta.description,
+            vote_average: fullMeta.imdbRating || 0,
+            release_date: fullMeta.releaseInfo || (fullMeta.year ? `${fullMeta.year}-01-01` : ''),
+            media_type: fullMeta.type,
+            seasons: [] 
+        };
+        
+        if (typeof openDetailsModal === 'function') {
+             openDetailsModal(fakeItem);
+        }
+    }
+})();
+</script>
+<script>
+(function() {
+    let installedAddons = [];
+
+    // --- Monkey Patch fetchTorrents ---
+    if (!window.originalFetchTorrents) {
+        window.originalFetchTorrents = window.fetchTorrents;
+    }
+
+    // Initialize: Load installed addons
+    window.loadAddons = async function() {
+        try {
+            const res = await window.electronAPI.addonList();
+            if (res.success) {
+                installedAddons = res.addons;
+                refreshProviderButtons();
+                updateSettingsList(); // Keep settings management
+            }
+        } catch (e) { console.error('Failed to load addons', e); }
+    };
+
+    // Initialize on load
+    document.addEventListener('DOMContentLoaded', async () => {
+        await window.loadAddons();
+        setupSettingsUI();
+    });
+
+    // --- Provider Logic (Keep this) ---
+    window.fetchTorrents = async function(season, episode) {
+        if (selectedProvider && selectedProvider.startsWith('addon:')) {
+            const addonId = selectedProvider.replace('addon:', '');
+            console.log('[Provider] Routing to Addon:', addonId);
+            return fetchAddonStreams(addonId, season, episode);
+        }
+        if (window.originalFetchTorrents) {
+            return window.originalFetchTorrents(season, episode);
+        }
+    };
+
+    function refreshProviderButtons() {
+        const containers = document.querySelectorAll('.provider-buttons');
+        
+        containers.forEach(container => {
+            container.querySelectorAll('.addon-provider-btn').forEach(b => b.remove());
+
+            installedAddons.forEach(addon => {
+                if (addon.manifest.resources.some(r => r.name === 'stream' || r === 'stream')) {
+                    const btn = document.createElement('button');
+                    btn.className = 'provider-btn addon-provider-btn';
+                    btn.dataset.provider = `addon:${addon.manifest.id}`;
+                    btn.textContent = addon.manifest.name;
+                    btn.style.border = "1px solid var(--vlc-orange)";
+                    
+                    btn.addEventListener('click', () => {
+                         document.querySelectorAll('.provider-btn').forEach(b => b.classList.remove('active'));
+                         document.querySelectorAll(`.provider-btn[data-provider="addon:${addon.manifest.id}"]`).forEach(b => b.classList.add('active'));
+                         
+                         selectedProvider = btn.dataset.provider;
+                         console.log('[Provider] Switched to:', selectedProvider);
+                         
+                         const tl = document.getElementById('torrentsList');
+                         if(tl) tl.innerHTML = `<div class="loading"><i class="fas fa-spinner"></i> Searching ${addon.manifest.name}...</div>`;
+                         
+                         torrentsLoaded = false;
+                         window.fetchTorrents(lastSearchedSeason, lastSearchedEpisode);
+                    });
+                    
+                    container.appendChild(btn);
+                }
+            });
+        });
+    }
+
+    // --- Settings UI (Keep this) ---
+    function setupSettingsUI() {
+        const installBtn = document.getElementById('installAddonBtn');
+        const input = document.getElementById('addonManifestUrl');
+        
+        if (installBtn && input) {
+            const newBtn = installBtn.cloneNode(true);
+            if (installBtn.parentNode) installBtn.parentNode.replaceChild(newBtn, installBtn);
+            
+            newBtn.addEventListener('click', async () => {
+                const url = input.value.trim();
+                if (!url) return;
+                
+                newBtn.disabled = true;
+                newBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+                
+                try {
+                    const res = await window.electronAPI.addonInstall(url);
+                    if (res.success) {
+                        input.value = '';
+                        await window.loadAddons();
+                        showNotification('Addon installed successfully!', 'success');
+                    } else {
+                        showNotification('Failed to install addon: ' + res.message, 'error');
+                    }
+                } catch (e) {
+                     showNotification('Error: ' + e.message, 'error');
+                } finally {
+                    newBtn.disabled = false;
+                    newBtn.innerHTML = '<i class="fas fa-plus"></i> Install';
+                }
+            });
+        }
+    }
+
+    function updateSettingsList() {
+        const list = document.getElementById('installedAddonsList');
+        if (!list) return;
+        
+        if (installedAddons.length === 0) {
+            list.innerHTML = '<div style="text-align: center; color: var(--gray); padding: 1rem;">No addons installed</div>';
+            return;
+        }
+        
+        list.innerHTML = '';
+        installedAddons.forEach(addon => {
+            const item = document.createElement('div');
+            item.style.cssText = 'display: flex; justify-content: space-between; align-items: center; padding: 0.75rem; background: rgba(255,255,255,0.05); border-radius: 6px;';
+            item.innerHTML = `
+                <div style="overflow:hidden;">
+                    <div style="font-weight: 600;">${addon.manifest.name} <span style="font-size: 0.8em; opacity: 0.7;">v${addon.manifest.version}</span></div>
+                    <div style="font-size: 0.85em; opacity: 0.7; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${addon.url}</div>
+                </div>
+                <button class="api-btn api-btn-secondary" style="padding: 0.4rem 0.6rem; font-size: 0.85rem; background: #dc3545; min-width: 32px;">
+                    <i class="fas fa-trash"></i>
+                </button>
+            `;
+            
+            item.querySelector('button').addEventListener('click', async () => {
+                if (confirm(`Uninstall ${addon.manifest.name}?`)) {
+                    await window.electronAPI.addonRemove(addon.manifest.id);
+                    await window.loadAddons();
+                }
+            });
+            
+            list.appendChild(item);
+        });
+    }
+
+    // --- Stream Fetching Logic (Updated with ID fix from previous step) ---
+    async function fetchAddonStreams(addonId, season, episode) {
+        const addon = installedAddons.find(a => a.manifest.id === addonId);
+        if (!addon) return;
+        
+        try {
+            const type = (currentMediaType === 'movie') ? 'movie' : 'series';
+            let imdbId = '';
+            
+            // Try to get IMDB ID from currentContent (populated by TMDB usually)
+            if (currentContent.external_ids && currentContent.external_ids.imdb_id) {
+                imdbId = currentContent.external_ids.imdb_id;
+            } else {
+                 // Fetch if missing
+                 const mediaType = currentMediaType === 'movie' ? 'movie' : 'tv';
+                 const res = await fetch(`https://api.themoviedb.org/3/${mediaType}/${currentContent.id}/external_ids?api_key=${TMDB_API_KEY}`);
+                 const data = await res.json();
+                 imdbId = data.imdb_id;
+            }
+            
+            if (!imdbId) throw new Error('No IMDB ID found');
+            
+            let resourceId = imdbId;
+            if (type === 'series') {
+                if (!season || !episode) throw new Error('Season and Episode required');
+                resourceId = `${imdbId}:${season}:${episode}`;
+            }
+            
+            let url = addon.url.replace('/manifest.json', '');
+            if (url.endsWith('/')) url = url.slice(0, -1);
+            
+            const streamUrl = `${url}/stream/${type}/${resourceId}.json`;
+            console.log('[Addon] Fetching streams:', streamUrl);
+            
+            const res = await fetch(streamUrl);
+            const data = await res.json();
+            
+            if (!data.streams || data.streams.length === 0) {
+                 const tl = document.getElementById('torrentsList');
+                 if(tl) tl.innerHTML = '<p>No streams found from this addon.</p>';
+                 return;
+            }
+            
+            const torrents = data.streams.map(s => {
+                let title = s.title || s.name || (s.behaviorHints ? s.behaviorHints.filename : 'Stream');
+                title = title.split('\n')[0];
+                return {
+                    title: title,
+                    streamUrl: s.url, 
+                    magnet: s.url && s.url.startsWith('magnet:') ? s.url : (s.infoHash ? `magnet:?xt=urn:btih:${s.infoHash}` : null),
+                    seeders: 0, 
+                    size: 0 
+                };
+            });
+            
+            displayTorrents(torrents, season, episode);
+            
+        } catch (e) {
+            console.error('[Addon] Error:', e);
+            const tl = document.getElementById('torrentsList');
+            if(tl) tl.innerHTML = `<div class="error-message">Addon Error: ${e.message}</div>`;
+        }
     }
 })();
 </script>

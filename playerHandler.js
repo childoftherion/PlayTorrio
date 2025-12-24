@@ -24,6 +24,9 @@ const socketPath = process.platform === 'win32'
 console.log('[Player] Socket Path:', socketPath);
 
 function initPlayer(mainWindow, mpvPath) {
+    // Only initialize embedded player on Windows
+    if (process.platform !== 'win32') return;
+
     if (playerWin && !playerWin.isDestroyed()) return;
     
     mainWinRef = mainWindow;
@@ -199,6 +202,21 @@ async function fetchAndLoadSubtitles(metadata) {
 }
 
 function openPlayer(mainWindow, mpvPath, url, startSeconds, metadata) {
+    // Linux/macOS: Open in standalone MPV (no embedded player)
+    if (process.platform !== 'win32') {
+        const args = [url];
+        if (startSeconds) args.push(`--start=${startSeconds}`);
+        
+        console.log('[Player] Spawning standalone MPV (Linux/Mac):', args);
+        const child = spawn(mpvPath, args, { 
+            detached: true, 
+            stdio: 'ignore',
+            cwd: path.dirname(mpvPath)
+        });
+        child.unref();
+        return;
+    }
+
     mainWinRef = mainWindow;
 
     // Ensure initialized
@@ -272,7 +290,7 @@ function startMPV(mpvPath, wid) {
 
     const mpvArgs = [
         `--input-ipc-server=${socketPath}`,
-        '--idle=yes',
+        ...(process.platform === 'win32' ? ['--idle=yes'] : []),
         '--force-window=yes',
         '--keep-open=yes',
         '--no-config',

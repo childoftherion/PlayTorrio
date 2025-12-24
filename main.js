@@ -2395,6 +2395,74 @@ ipcMain.handle("manifestRead", async () => {
     }
 });
 
+// Stremio Addon Management
+const getAddonsFilePath = () => path.join(app.getPath("userData"), "addons.json");
+
+ipcMain.handle("addonInstall", async (event, manifestUrl) => {
+    try {
+        // Fetch manifest to validate and get details
+        const response = await got(manifestUrl);
+        const manifest = JSON.parse(response.body);
+
+        if (!manifest.id || !manifest.name || !manifest.version) {
+            return { success: false, message: "Invalid manifest: missing id, name, or version" };
+        }
+
+        const filePath = getAddonsFilePath();
+        let addons = [];
+        if (fs.existsSync(filePath)) {
+            addons = JSON.parse(fs.readFileSync(filePath, "utf8"));
+        }
+
+        // Check duplicates
+        if (addons.some(a => a.manifest.id === manifest.id)) {
+             // Update existing
+             addons = addons.map(a => a.manifest.id === manifest.id ? { url: manifestUrl, manifest } : a);
+        } else {
+            addons.push({ url: manifestUrl, manifest });
+        }
+
+        fs.writeFileSync(filePath, JSON.stringify(addons, null, 2));
+        return { success: true, manifest };
+    } catch (error) {
+        console.error("Error installing addon:", error);
+        return { success: false, message: error.message };
+    }
+});
+
+ipcMain.handle("addonList", async () => {
+    try {
+        const filePath = getAddonsFilePath();
+        if (!fs.existsSync(filePath)) return { success: true, addons: [] };
+        const addons = JSON.parse(fs.readFileSync(filePath, "utf8"));
+        return { success: true, addons };
+    } catch (error) {
+        console.error("Error listing addons:", error);
+        return { success: false, message: error.message, addons: [] };
+    }
+});
+
+ipcMain.handle("addonRemove", async (event, addonId) => {
+    try {
+        const filePath = getAddonsFilePath();
+        if (!fs.existsSync(filePath)) return { success: false, message: "No addons found" };
+        
+        let addons = JSON.parse(fs.readFileSync(filePath, "utf8"));
+        const initialLength = addons.length;
+        addons = addons.filter(a => a.manifest.id !== addonId);
+        
+        if (addons.length === initialLength) {
+             return { success: false, message: "Addon not found" };
+        }
+
+        fs.writeFileSync(filePath, JSON.stringify(addons, null, 2));
+        return { success: true };
+    } catch (error) {
+         console.error("Error removing addon:", error);
+         return { success: false, message: error.message };
+    }
+});
+
     // Advanced MPV launcher with headers (for MovieBox/FMovies)
     ipcMain.handle('open-mpv-headers', async (event, options) => {
         try {
