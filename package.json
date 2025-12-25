@@ -65,19 +65,15 @@
       "server.mjs",
       "api.cjs",
       "chromecast.mjs",
-      "playerHandler.js",
-      "Player/**",
       "jackett_api_key.json",
       "src/**/*",
       "public/**/*",
       "node_modules/**/*",
-      "mpv/**",
       "yt/**",
       "linyt/**",
       "macyt/**"
     ],
     "asarUnpack": [
-      "mpv/**",
       "node_modules/ffmpeg-static/**",
       "yt/**",
       "linyt/**",
@@ -91,13 +87,6 @@
         "nsis"
       ],
       "extraResources": [
-        {
-          "from": "mpv",
-          "to": "mpv",
-          "filter": [
-            "**/*"
-          ]
-        },
         {
           "from": "yt",
           "to": "yt",

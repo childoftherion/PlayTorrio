@@ -2205,8 +2205,8 @@ if (!gotLock) {
 global.manifestRead = (data) => ipcMain.invoke("manifestRead", data);
 global.manifestWrite = (data) => ipcMain.invoke("manifestWrite", data);
 
-    // Register embedded player IPC handlers
-    registerIPC();
+    // Register embedded player IPC handlers - Removed
+    // registerIPC();
 
     // IPC handler to open Player from renderer (formerly MPV)
     ipcMain.handle('open-in-mpv', (event, data) => {
