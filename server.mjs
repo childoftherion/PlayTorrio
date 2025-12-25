@@ -385,13 +385,13 @@ export function startServer(userDataPath, executablePath = null, ffmpegBin = nul
     });
 
     app.get('/api/transcode/stream', async (req, res) => {
-        const { url: videoUrl, start = 0, audioTrack = 0 } = req.query;
+        const { url: videoUrl, start = 0, audioTrack = 0, quality = 'mid' } = req.query;
         if (!videoUrl) return res.status(400).send('Missing url');
 
         // Use 127.0.0.1 for internal requests
         const targetUrl = videoUrl.replace('localhost', '127.0.0.1');
 
-        console.log(`[Transcoder] Request: ${targetUrl} from ${start}s`);
+        console.log(`[Transcoder] Request: ${targetUrl} from ${start}s [Quality: ${quality}]`);
         console.log(`[Transcoder] Using binary: ${resolvedFfmpegPath}`);
 
         // Fetch metadata to get duration if not cached
@@ -411,19 +411,66 @@ export function startServer(userDataPath, executablePath = null, ffmpegBin = nul
             'Transfer-Encoding': 'chunked'
         });
 
+        // Quality Presets
+        let videoBitrate = '2500k';
+        let maxRate = '3000k';
+        let bufSize = '6000k';
+        let scaleFilter = 'scale=-2:720,fps=30';
+        let preset = 'ultrafast';
+
+        switch (quality) {
+            case 'native':
+                videoBitrate = '25000k'; // High bitrate for 4K/Original
+                maxRate = '30000k';
+                bufSize = '60000k';
+                scaleFilter = null; // No scaling, keep original resolution
+                preset = 'ultrafast';
+                break;
+            case 'high':
+                videoBitrate = '5000k';
+                maxRate = '6000k';
+                bufSize = '12000k';
+                scaleFilter = 'scale=-2:1080,fps=30';
+                preset = 'superfast'; 
+                break;
+            case 'low':
+                videoBitrate = '1000k';
+                maxRate = '1500k';
+                bufSize = '3000k';
+                scaleFilter = 'scale=-2:480,fps=30';
+                preset = 'ultrafast';
+                break;
+            case 'mid':
+            default:
+                videoBitrate = '2500k';
+                maxRate = '3000k';
+                bufSize = '6000k';
+                scaleFilter = 'scale=-2:720,fps=30';
+                preset = 'ultrafast';
+                break;
+        }
+
         const args = [
             '-ss', start.toString(),
             '-i', targetUrl,
             '-reconnect', '1', '-reconnect_streamed', '1', '-reconnect_delay_max', '5',
             '-map', '0:v:0',
             '-map', `0:a:${audioTrack}`,
-            '-c:v', 'libx264', '-preset', 'ultrafast', '-tune', 'zerolatency',
-            '-pix_fmt', 'yuv420p', '-vf', 'scale=-2:720,fps=30',
-            '-b:v', '2500k', '-maxrate', '3000k', '-bufsize', '6000k',
+            '-c:v', 'libx264', '-preset', preset, '-tune', 'zerolatency',
+            '-pix_fmt', 'yuv420p'
+        ];
+
+        // Only apply scale filter if defined (not native)
+        if (scaleFilter) {
+            args.push('-vf', scaleFilter);
+        }
+
+        args.push(
+            '-b:v', videoBitrate, '-maxrate', maxRate, '-bufsize', bufSize,
             '-c:a', 'aac', '-b:a', '128k', '-ac', '2', '-ar', '44100',
             '-movflags', 'frag_keyframe+empty_moov+default_base_moof+faststart',
             '-f', 'mp4', '-'
-        ];
+        );
 
         const ffmpeg = spawn(resolvedFfmpegPath, args);
         ffmpeg.stdout.pipe(res);

@@ -18110,7 +18110,8 @@ Your browser does not support the video tag.
                         url: currentStreamUrl,
                         tmdbId: tmdbId,
                         seasonNum: seasonNum,
-                        episodeNum: episodeNum
+                        episodeNum: episodeNum,
+                        isDebrid: useDebrid
                     });
                     
                     if (result.success) {
@@ -25026,7 +25027,8 @@ Your browser does not support the video tag.
                             url,
                             tmdbId,
                             seasonNum,
-                            episodeNum
+                            episodeNum,
+                            isDebrid: useDebrid
                         });
                         
                         if (res?.success) {
@@ -25113,7 +25115,8 @@ Your browser does not support the video tag.
                     url,
                     tmdbId,
                     seasonNum,
-                    episodeNum
+                    episodeNum,
+                    isDebrid: useDebrid
                 });
 
                 if (res?.success) {
@@ -25539,7 +25542,8 @@ async function fetchMovieBoxStreams(season = null, episode = null) {
                             url: file.url,
                             tmdbId,
                             seasonNum,
-                            episodeNum
+                            episodeNum,
+                            isDebrid: useDebrid
                         });
 
                         if (res?.success) {
@@ -25707,7 +25711,8 @@ async function fetchMovieBoxStreams(season = null, episode = null) {
                     userAgent: ua,
                     referer: ref,
                     cookie,
-                    hlsBitrate: bitrate || undefined
+                    hlsBitrate: bitrate || undefined,
+                    isDebrid: useDebrid
                 });
 
                 if (result?.success) {
@@ -25828,7 +25833,8 @@ async function fetchMovieBoxStreams(season = null, episode = null) {
                                         url: server.url,
                                         tmdbId,
                                         seasonNum: null,
-                                        episodeNum: null
+                                        episodeNum: null,
+                                        isDebrid: useDebrid
                                     });
 
                                     if (res?.success) {
@@ -25982,7 +25988,8 @@ async function fetchMovieBoxStreams(season = null, episode = null) {
                                                     url: stream.url,
                                                     tmdbId,
                                                     seasonNum,
-                                                    episodeNum
+                                                    episodeNum,
+                                                    isDebrid: useDebrid
                                                 });
                 
                                                 if (res?.success) {
@@ -26596,7 +26603,8 @@ async function fetchMovieBoxStreams(season = null, episode = null) {
                                      url: torrent.streamUrl,
                                      tmdbId,
                                      seasonNum,
-                                     episodeNum
+                                     episodeNum,
+                                     isDebrid: useDebrid
                                  });
 
                                  if (res?.success) {
@@ -30251,7 +30259,8 @@ async function fetchMovieBoxStreams(season = null, episode = null) {
                         tmdbId,
                         seasonNum: null,
                         episodeNum,
-                        subtitles: subtitles || null
+                        subtitles: subtitles || null,
+                        isDebrid: useDebrid
                     });
                     
                     if (res?.success) {

@@ -221,6 +221,7 @@
 
                     <div class="right-controls">
                         <button class="icon-btn" id="audio-btn" title="Audio Tracks"><i class="material-icons">audiotrack</i></button>
+                        <button class="icon-btn" id="settings-btn" title="Quality Settings"><i class="material-icons">settings</i></button>
                         <button class="icon-btn" id="subs-btn" title="Subtitles"><i class="material-icons">subtitles</i></button>
                         <button class="icon-btn" id="fullscreen-btn" title="Fullscreen"><i class="material-icons">fullscreen</i></button>
                     </div>
@@ -236,6 +237,20 @@
             </div>
             <div id="audio-list" class="scrollable-list">
                 <div style="padding:30px; text-align:center; color:#666;">Loading tracks...</div>
+            </div>
+        </div>
+
+        <!-- Settings Menu -->
+        <div id="settings-menu" class="menu-popup">
+            <div class="menu-header">
+                <span>QUALITY</span>
+                <button class="icon-btn" id="close-settings" style="padding:4px;"><i class="material-icons">close</i></button>
+            </div>
+            <div id="settings-list" class="scrollable-list">
+                <div class="list-item" data-quality="native" onclick="changeQuality('native', this)">Native (Source) - Original Quality</div>
+                <div class="list-item" data-quality="high" onclick="changeQuality('high', this)">High (1080p) - Best Quality</div>
+                <div class="list-item active" data-quality="mid" onclick="changeQuality('mid', this)">Medium (720p) - Balanced</div>
+                <div class="list-item" data-quality="low" onclick="changeQuality('low', this)">Low (480p) - Fast</div>
             </div>
         </div>
 
@@ -279,12 +294,24 @@
         const season = params.get('season');
         const episode = params.get('episode');
         const type = params.get('type');
+        const isDebrid = params.get('isDebrid') === '1';
 
         const titleEl = document.getElementById('video-title');
         titleEl.textContent = (season && episode) ? `S${season}:E${episode}` : (type === 'movie' ? 'Movie' : 'Video');
 
         // State
         let isTranscoding = false; 
+        function updateTranscodeUI() {
+            const badge = document.getElementById('transcode-badge');
+            const settingsBtn = document.getElementById('settings-btn');
+            settingsBtn.style.display = 'flex';
+            if (isTranscoding) {
+                badge.style.display = 'inline-block';
+            } else {
+                badge.style.display = 'none';
+            }
+        }
+        updateTranscodeUI();
         let videoDuration = 0;
         let subtitles = [];
         let activeSub = null;
@@ -294,6 +321,7 @@
         let activityTimeout;
         let currentAudioTrack = 0;
         let audioTracks = [];
+        let currentQuality = 'mid';
 
         // --- Initialization ---
         if (videoUrl) {
@@ -308,7 +336,7 @@
             document.getElementById('loading-spinner').style.display = 'block';
             
             try {
-                // Fetch metadata to decide if we need transcoding
+                // Fetch metadata (required for audio tracks/duration in transcoding mode)
                 const metaRes = await fetch(`http://127.0.0.1:6987/api/transcode/metadata?url=${encodeURIComponent(url)}`);
                 const metadata = await metaRes.json();
                 
@@ -318,32 +346,16 @@
                     renderAudioTracks();
                 }
 
-                // Check if transcoding is required
-                // Robust extension check
-                const cleanUrl = url.split('?')[0].split('#')[0];
-                const ext = cleanUrl.substring(cleanUrl.lastIndexOf('.') + 1).toLowerCase();
-                const unsupportedContainer = !['mp4', 'webm', 'mov', 'm4v'].includes(ext);
-                
-                const primaryAudio = audioTracks[0];
-                const unsupportedAudio = primaryAudio && ['ac3', 'dts', 'truehd', 'eac3'].includes(primaryAudio.codec.toLowerCase());
+                // Always Transcode per user request
+                console.log('Player: Transcoding enforced (Always On)');
+                isTranscoding = true;
+                updateTranscodeUI();
+                loadTranscodedStream(url, start);
 
-                if (unsupportedContainer || unsupportedAudio) {
-                    console.log('Player: Transcoding required', { ext, unsupportedAudio });
-                    isTranscoding = true;
-                    loadTranscodedStream(url, start);
-                } else {
-                    console.log('Player: Playing natively');
-                    isTranscoding = false;
-                    document.getElementById('transcode-badge').style.display = 'none';
-                    video.src = url;
-                    if (start > 0) video.currentTime = start;
-                    video.play().catch(e => {
-                        console.warn('Native play failed, falling back to transcoder');
-                        fallbackToTranscoder(url, video.currentTime);
-                    });
-                }
             } catch (e) {
-                console.error('Metadata fetch failed, trying native play', e);
+                console.error('Metadata fetch failed, falling back to native play', e);
+                isTranscoding = false;
+                updateTranscodeUI();
                 video.src = url;
                 if (start > 0) video.currentTime = start;
                 video.play();
@@ -353,18 +365,19 @@
         function fallbackToTranscoder(url, start) {
             if (isTranscoding) return;
             isTranscoding = true;
-            document.getElementById('transcode-badge').style.display = 'inline-block';
+            updateTranscodeUI();
             loadTranscodedStream(url, start);
         }
 
         function loadTranscodedStream(url, start) {
-            console.log('Player: Loading Transcoded Stream from', start);
+            console.log('Player: Loading Transcoded Stream from', start, 'Quality:', currentQuality);
             // Ensure we use the global videoUrl variable if url is just a placeholder
             const targetUrl = url || videoUrl;
-            const streamUrl = `http://127.0.0.1:6987/api/transcode/stream?url=${encodeURIComponent(targetUrl)}&start=${start}&audioTrack=${currentAudioTrack}`;
+            const streamUrl = `http://127.0.0.1:6987/api/transcode/stream?url=${encodeURIComponent(targetUrl)}&start=${start}&audioTrack=${currentAudioTrack}&quality=${currentQuality}`;
             
             document.getElementById('loading-spinner').style.display = 'block';
-            document.getElementById('transcode-badge').style.display = 'inline-block';
+            isTranscoding = true;
+            updateTranscodeUI();
             
             video.src = streamUrl;
             video.load();
@@ -404,9 +417,38 @@
         audioBtn.onclick = (e) => {
             e.stopPropagation();
             subsMenu.classList.remove('visible');
+            settingsMenu.classList.remove('visible');
             audioMenu.classList.toggle('visible');
         };
         closeAudio.onclick = () => audioMenu.classList.remove('visible');
+
+        // --- Settings Menu ---
+        const settingsBtn = document.getElementById('settings-btn');
+        const settingsMenu = document.getElementById('settings-menu');
+        const closeSettings = document.getElementById('close-settings');
+        
+        settingsBtn.onclick = (e) => {
+            e.stopPropagation();
+            audioMenu.classList.remove('visible');
+            subsMenu.classList.remove('visible');
+            settingsMenu.classList.toggle('visible');
+        };
+        closeSettings.onclick = () => settingsMenu.classList.remove('visible');
+
+        window.changeQuality = (q, el) => {
+            if (currentQuality === q && isTranscoding) return;
+            currentQuality = q;
+            
+            document.querySelectorAll('#settings-list .list-item').forEach(x => x.classList.remove('active'));
+            if (el) el.classList.add('active');
+            
+            settingsMenu.classList.remove('visible');
+            
+            const currentTime = getCurrentRealTime();
+            // Force transcoding switch
+            isTranscoding = true;
+            loadTranscodedStream(videoUrl, currentTime);
+        };
 
         // --- Controls ---
         const playBtn = document.getElementById('play-pause-btn');
@@ -423,6 +465,13 @@
         video.onpause = () => { playIcon.textContent = 'play_arrow'; };
         video.onwaiting = () => { document.getElementById('loading-spinner').style.display = 'block'; };
         video.onplaying = () => { document.getElementById('loading-spinner').style.display = 'none'; };
+
+        video.onerror = () => {
+            if (!isTranscoding) {
+                console.warn('Video error occurred, falling back to transcoder');
+                fallbackToTranscoder(videoUrl, video.currentTime);
+            }
+        };
 
         // Progress & Seeking
         const progressWrapper = document.getElementById('progress-wrapper');
@@ -515,7 +564,7 @@
             document.body.classList.remove('hide-mouse');
             clearTimeout(activityTimeout);
             activityTimeout = setTimeout(() => {
-                if (!video.paused && !subsMenu.classList.contains('visible') && !audioMenu.classList.contains('visible')) {
+                if (!video.paused && !subsMenu.classList.contains('visible') && !audioMenu.classList.contains('visible') && !settingsMenu.classList.contains('visible')) {
                     container.classList.remove('show-controls');
                     document.body.classList.add('hide-mouse');
                 }
@@ -532,6 +581,7 @@
         subsBtn.onclick = (e) => {
             e.stopPropagation();
             audioMenu.classList.remove('visible');
+            settingsMenu.classList.remove('visible');
             subsMenu.classList.toggle('visible');
         };
         closeSubs.onclick = () => subsMenu.classList.remove('visible');

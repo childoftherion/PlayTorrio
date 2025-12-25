@@ -1112,6 +1112,7 @@ function openInHtml5Player(win, streamUrl, startSeconds, metadata = {}) {
         if (metadata.seasonNum) params.append('season', metadata.seasonNum);
         if (metadata.episodeNum) params.append('episode', metadata.episodeNum);
         if (metadata.type) params.append('type', metadata.type);
+        if (metadata.isDebrid) params.append('isDebrid', '1');
 
         const playerUrl = `http://localhost:6987/player.html?${params.toString()}`;
         console.log('[HTML5] Loading:', playerUrl);
@@ -2513,14 +2514,14 @@ ipcMain.handle("addonRemove", async (event, addonId) => {
     // Launcher for external streams (formerly Advanced MPV launcher)
     ipcMain.handle('open-mpv-headers', async (event, options) => {
         try {
-            const { url, startSeconds } = options || {};
+            const { url, startSeconds, isDebrid } = options || {};
 
             if (!url) {
                 return { success: false, message: 'Missing URL' };
             }
 
             console.log('[HTML5] Opening stream with headers (headers ignored in HTML5):', url);
-            return openInHtml5Player(mainWindow, url, startSeconds);
+            return openInHtml5Player(mainWindow, url, startSeconds, { isDebrid });
         } catch (error) {
             console.error('[HTML5] Launcher error:', error);
             return { success: false, message: error.message };
@@ -2528,10 +2529,10 @@ ipcMain.handle("addonRemove", async (event, addonId) => {
     });
 
     // IPC handler to spawn player (formerly mpv.js, now HTML5)
-    ipcMain.handle('spawn-mpvjs-player', async (event, { url, tmdbId, seasonNum, episodeNum, subtitles }) => {
-        console.log('[Player] Spawn request (HTML5):', { url, tmdbId });
+    ipcMain.handle('spawn-mpvjs-player', async (event, { url, tmdbId, seasonNum, episodeNum, subtitles, isDebrid }) => {
+        console.log('[Player] Spawn request (HTML5):', { url, tmdbId, isDebrid });
         try {
-             return openInHtml5Player(mainWindow, url, null, { tmdbId, seasonNum, episodeNum, type: (seasonNum ? 'tv' : 'movie') });
+             return openInHtml5Player(mainWindow, url, null, { tmdbId, seasonNum, episodeNum, isDebrid, type: (seasonNum ? 'tv' : 'movie') });
         } catch(e) {
              console.error('Error spawning HTML5 player:', e);
              return { success: false, message: e.message };
