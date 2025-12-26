@@ -63,6 +63,7 @@
       "server.mjs",
       "api.cjs",
       "chromecast.mjs",
+      "torrent_filter.mjs",
       "jackett_api_key.json",
       "src/**/*",
       "public/**/*",
