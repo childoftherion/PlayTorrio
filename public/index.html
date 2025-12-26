@@ -4200,9 +4200,8 @@
             font-weight: 600;
             margin-bottom: 0.5rem;
             color: white;
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
+            white-space: normal;
+            word-break: break-word;
             font-size: 0.9rem;
         }
 
@@ -26562,7 +26561,7 @@ async function fetchMovieBoxStreams(season = null, episode = null) {
                     <div class="torrent-info">
                         <p class="torrent-name">
                             ${torrent.title}
-                            <span class="cached-badge" style="display:none;">Cached</span>
+                            <span class="cached-badge" style="display:none; padding: 2px 6px; border-radius: 4px; font-size: 0.8em; margin-left: 8px;"></span>
                         </p>
                         <div class="torrent-details">
                             <span><i class="fas fa-arrow-up"></i> ${torrent.seeders}</span>
@@ -26647,7 +26646,8 @@ async function fetchMovieBoxStreams(season = null, episode = null) {
 
                 torrentsList.appendChild(item);
 
-                // Removed instant availability checks and badges
+                // Debrid availability check REMOVED: Feature permanently disabled by Real-Debrid (403 disabled_endpoint)
+                // We cannot check cached status without adding the torrent to the user's account, which is too heavy for list views.
             });
 
             renderTorrentPagination();
@@ -26827,7 +26827,17 @@ async function fetchMovieBoxStreams(season = null, episode = null) {
                     // Render RD files for explicit selection, like our torrent file list
                     mpvLoading.style.display = 'none';
                     fileList.innerHTML = '';
-                    playerTitle.textContent = info?.filename || providerLabel;
+                    
+                    const isCached = info?.status === 'downloaded';
+                    const statusPrefix = isCached ? '✅ Cached' : '⬇️ Downloading';
+                    playerTitle.textContent = `${statusPrefix} - ${info?.filename || providerLabel}`;
+                    
+                    if (!isCached) {
+                        showNotification(`${providerLabel}: Torrent not cached. Downloading to cloud...`, 'info');
+                    } else {
+                        showNotification(`${providerLabel}: Torrent is cached and ready!`, 'success');
+                    }
+
                     const rdVideos = files.filter(f => /\.(mp4|mkv|avi|mov)$/i.test(f.path || f.filename || ''));
                     const rdSubs = files.filter(f => /\.(srt|vtt)$/i.test(f.path || f.filename || ''));
 
@@ -26836,7 +26846,8 @@ async function fetchMovieBoxStreams(season = null, episode = null) {
 
                     // Helper to render a small cached status badge
                     const statusBadgeHtml = (file) => {
-                        const cached = (file && file.cached === true) || (Array.isArray(file.links) && file.links.length > 0);
+                        // If the torrent itself is 'downloaded', effectively all its files are cached/ready
+                        const cached = (info?.status === 'downloaded') || (file && file.cached === true) || (Array.isArray(file.links) && file.links.length > 0);
                         const label = cached ? 'Cached' : 'Not cached';
                         const bg = cached ? 'background:#198754;' : 'background:#6c757d;';
                         return `<span class="source-badge rd-cache-badge" style="${bg} margin-left:6px;">${label}</span>`;

@@ -327,6 +327,8 @@
         let currentQuality = 'mid';
         let retryCount = 0;
         const MAX_RETRIES = 10;
+        let lastAbsoluteTime = 0;
+        let playbackStableTimer = null;
 
         // --- Initialization ---
         if (videoUrl) {
@@ -339,6 +341,7 @@
 
         async function initPlayer(url, start) {
             document.getElementById('loading-spinner').style.display = 'block';
+            lastAbsoluteTime = start || 0; // Initialize
             
             try {
                 // Fetch metadata (required for audio tracks/duration in transcoding mode)
@@ -378,7 +381,10 @@
             console.log('Player: Loading Transcoded Stream from', start, 'Quality:', currentQuality);
             // Ensure we use the global videoUrl variable if url is just a placeholder
             const targetUrl = url || videoUrl;
-            const streamUrl = `http://127.0.0.1:6987/api/transcode/stream?url=${encodeURIComponent(targetUrl)}&start=${start}&audioTrack=${currentAudioTrack}&quality=${currentQuality}`;
+            // Ensure start is a valid number
+            const startTime = typeof start === 'number' ? start : lastAbsoluteTime;
+            
+            const streamUrl = `http://127.0.0.1:6987/api/transcode/stream?url=${encodeURIComponent(targetUrl)}&start=${startTime}&audioTrack=${currentAudioTrack}&quality=${currentQuality}`;
             
             document.getElementById('loading-spinner').style.display = 'block';
             isTranscoding = true;
@@ -407,7 +413,7 @@
                     document.querySelectorAll('#audio-list .list-item').forEach(x => x.classList.remove('active'));
                     el.classList.add('active');
                     
-                    const currentTime = getCurrentRealTime();
+                    const currentTime = lastAbsoluteTime; // Use reliable tracked time
                     isTranscoding = true;
                     loadTranscodedStream(videoUrl, currentTime);
                     document.getElementById('audio-menu').classList.remove('visible');
@@ -449,7 +455,7 @@
             
             settingsMenu.classList.remove('visible');
             
-            const currentTime = getCurrentRealTime();
+            const currentTime = lastAbsoluteTime; // Use reliable tracked time
             // Force transcoding switch
             isTranscoding = true;
             loadTranscodedStream(videoUrl, currentTime);
@@ -469,24 +475,44 @@
         video.onplay = () => { playIcon.textContent = 'pause'; document.getElementById('loading-spinner').style.display = 'none'; };
         video.onpause = () => { playIcon.textContent = 'play_arrow'; };
         video.onwaiting = () => { document.getElementById('loading-spinner').style.display = 'block'; };
+        
         video.onplaying = () => { 
             document.getElementById('loading-spinner').style.display = 'none';
-            retryCount = 0;
+            // Only reset retry count if playback is stable for 10 seconds
+            if (playbackStableTimer) clearTimeout(playbackStableTimer);
+            playbackStableTimer = setTimeout(() => {
+                retryCount = 0;
+                console.log('Player: Playback stable, retry count reset');
+            }, 10000);
+        };
+
+        // Handle stream ending (normal or premature)
+        video.onended = () => {
+            const duration = (isTranscoding && videoDuration > 0) ? videoDuration : video.duration;
+            // If ended but we are far from the end (e.g., > 10 seconds remaining), treat as error/crash
+            if (duration && lastAbsoluteTime < (duration - 10)) {
+                console.warn(`Video ended prematurely at ${lastAbsoluteTime}s (duration: ${duration}s). Retrying...`);
+                handlePlaybackError({ code: 'PREMATURE_END', message: 'Stream ended early' });
+            } else {
+                console.log('Video ended normally.');
+            }
         };
 
         video.onerror = () => {
             const err = video.error;
             console.warn('Video error:', err);
-            
+            handlePlaybackError(err);
+        };
+
+        function handlePlaybackError(err) {
             if (!isTranscoding) {
                 console.warn('Video error occurred, falling back to transcoder');
-                fallbackToTranscoder(videoUrl, video.currentTime);
+                fallbackToTranscoder(videoUrl, lastAbsoluteTime);
             } else {
-                // Transcoder stream failed - Immediate Retry Logic
+                // Transcoder stream failed - Retry Logic
                 if (retryCount < MAX_RETRIES) {
                     retryCount++;
-                    // Calculate correct resume time (start offset + played duration)
-                    const resumeTime = getCurrentRealTime();
+                    const resumeTime = lastAbsoluteTime;
                     console.log(`Transcoder error (code ${err?.code}). Retrying (${retryCount}/${MAX_RETRIES}) from ${resumeTime}s...`);
                     
                     // Show spinner
@@ -499,10 +525,10 @@
                 } else {
                     console.error('Max retries reached for transcoder.');
                     document.getElementById('loading-spinner').style.display = 'none';
-                    // Optional: could show a UI message here
+                    // Optional: show UI message
                 }
             }
-        };
+        }
 
         // Progress & Seeking
         const progressWrapper = document.getElementById('progress-wrapper');
@@ -526,6 +552,9 @@
         video.ontimeupdate = () => {
             const currentDuration = (isTranscoding && videoDuration > 0) ? videoDuration : video.duration;
             const currentTime = getCurrentRealTime();
+            
+            // Track absolute time reliably for resume/recovery
+            if (currentTime > 0) lastAbsoluteTime = currentTime;
             
             const pct = (currentTime / currentDuration) * 100;
             progressBar.style.width = `${pct || 0}%`;

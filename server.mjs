@@ -1476,7 +1476,7 @@ async function tbGetStreamUrl(torrentId, timeout = 30_000) {
             const headers = {
                 Authorization: `Bearer ${token}`,
                 Accept: 'application/json',
-                'User-Agent': 'Playtorrio/1.0',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
                 ...(opts.headers || {})
             };
             
@@ -1534,7 +1534,7 @@ async function tbGetStreamUrl(torrentId, timeout = 30_000) {
                         headers: { 
                             'Accept': 'application/json', 
                             'Content-Type': 'application/x-www-form-urlencoded',
-                            'User-Agent': 'Playtorrio/1.0'
+                            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
                         }, 
                         body: tb
                     });
@@ -1629,11 +1629,13 @@ async function tbGetStreamUrl(torrentId, timeout = 30_000) {
         }
         
         const ct = resp.headers.get('content-type') || '';
+        const cl = resp.headers.get('content-length') || '?';
         const elapsed = Date.now() - started;
-        console.log('[RD][call] ok', { endpoint, status: resp.status, ms: elapsed });
+        console.log('[RD][call] ok', { endpoint, status: resp.status, ms: elapsed, cl });
         
         // Handle JSON parsing with error handling
-        if (/json/i.test(ct)) {
+        // We relax the check to include 201 Created which implies a resource was made (and usually returns JSON)
+        if (/json/i.test(ct) || resp.status === 201) {
             try {
                 const text = await resp.text();
                 if (!text || text.trim() === '') {
@@ -1643,7 +1645,7 @@ async function tbGetStreamUrl(torrentId, timeout = 30_000) {
                 return JSON.parse(text);
             } catch (e) {
                 console.error('[RD][call] JSON parse error for', endpoint, ':', e?.message);
-                console.error('[RD][call] Response text:', text?.substring(0, 200));
+                // console.error('[RD][call] Response text:', text?.substring(0, 200)); // text not available here in catch scope easily without refactor
                 const err = new Error(`RD ${endpoint} returned invalid JSON: ${e?.message}`);
                 err.code = 'RD_PARSE_ERROR';
                 err.status = 502;
@@ -1670,7 +1672,7 @@ async function tbGetStreamUrl(torrentId, timeout = 30_000) {
     // Helper: no-op; we no longer call RD instantAvailability
     async function rdMarkCachedFiles(info) { return info; }
 
-    // Debrid availability endpoint is disabled for RD to avoid extra API calls
+    // Debrid availability endpoint
     app.get('/api/debrid/availability', async (req, res) => {
         try {
             const s = readSettings();
@@ -1678,8 +1680,33 @@ async function tbGetStreamUrl(torrentId, timeout = 30_000) {
             const btih = String(req.query.btih || '').trim().toUpperCase();
             if (!btih || btih.length < 32) return res.status(400).json({ error: 'Invalid btih' });
             const provider = (s.debridProvider || 'realdebrid').toLowerCase();
+            
             if (provider === 'realdebrid') {
-                return res.json({ provider: 'realdebrid', available: false, disabled: true, message: 'Instant availability is disabled in this app' });
+                // Real-Debrid Instant Availability
+                // Endpoint: /torrents/instantAvailability/{hash}
+                try {
+                    const data = await rdFetch(`/torrents/instantAvailability/${btih}`);
+                    // Response structure: { "HASH": { "rd": [ { ...variants... } ] } }
+                    // If "rd" key exists and is an array with items, it is cached on RD servers.
+                    const lower = btih.toLowerCase();
+                    const entry = data?.[lower];
+                    
+                    // Check if 'rd' property exists and has content
+                    let available = false;
+                    if (entry && Array.isArray(entry.rd) && entry.rd.length > 0) {
+                        available = true;
+                    }
+                    
+                    return res.json({ provider: 'realdebrid', available, raw: data });
+                } catch (e) {
+                    const msg = e?.message || '';
+                    // 404 from RD instant availability usually just means "not found/not valid hash" or similar, 
+                    // but usually it returns 200 with empty object or specific structure.
+                    // If actual error:
+                    console.error('[RD][availability] check failed', msg);
+                    if (e?.code === 'RD_FORBIDDEN') return res.status(403).json({ error: 'RD access denied', code: 'RD_FORBIDDEN' });
+                    return res.json({ provider: 'realdebrid', available: false, error: msg });
+                }
             }
             if (provider === 'torbox') {
                 console.log('[TB][availability]', { btih });
@@ -1745,18 +1772,13 @@ async function tbGetStreamUrl(torrentId, timeout = 30_000) {
                 // Step 2: Check existing torrents to avoid duplicates
                 if (btih) {
                     try {
-                        const existing = await rdFetch('/torrents');
+                        // Check first page (limit 100)
+                        const existing = await rdFetch('/torrents?limit=100');
                         if (Array.isArray(existing)) {
                             const match = existing.find(t => (t?.hash || '').toLowerCase() === btih.toLowerCase());
                             if (match && match.id) {
-                                console.log('[RD][prepare] Reusing existing torrent', { id: match.id, status: match.status });
+                                console.log('[RD][prepare] Reusing existing torrent (found in page 1)', { id: match.id, status: match.status });
                                 let info = await rdFetch(`/torrents/info/${match.id}`);
-                                
-                                // Don't auto-select files - let user choose which file they want
-                                // Auto-selecting all files causes RD to cache/download entire season packs
-                                // which wastes bandwidth and can lead to wrong file selection
-                                // File selection happens later via /api/debrid/select-files when user clicks
-                                
                                 return res.json({ id: match.id, info, reused: true });
                             }
                         }
@@ -1772,7 +1794,54 @@ async function tbGetStreamUrl(torrentId, timeout = 30_000) {
                     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
                     body: new URLSearchParams({ magnet })
                 });
-                const id = addRes?.id;
+                
+                let id = addRes?.id;
+                
+                // Fallback: If addMagnet returned 200 OK but empty body (no ID), check torrent list again.
+                // This handles transient RD API glitches where it accepts the magnet but drops the JSON response.
+                if (!id && btih) {
+                    console.warn('[RD][prepare] addMagnet returned no ID, scanning torrent list for fallback...');
+                    try {
+                        // Small delay to ensure RD processed it
+                        await new Promise(r => setTimeout(r, 500));
+                        
+                        // DEEP SCAN: Check up to 5 pages (500 torrents)
+                        // If "200 Empty" means "Already Exists", it might be an old torrent deep in history
+                        let foundId = null;
+                        for (let page = 1; page <= 5; page++) {
+                            console.log(`[RD][prepare] Scanning torrents page ${page}...`);
+                            const list = await rdFetch(`/torrents?limit=100&page=${page}`);
+                            if (!Array.isArray(list) || list.length === 0) break;
+                            
+                            const match = list.find(t => (t?.hash || '').toLowerCase() === btih.toLowerCase());
+                            if (match && match.id) {
+                                console.log('[RD][prepare] Found torrent in fallback scan', { id: match.id, page });
+                                foundId = match.id;
+                                break;
+                            }
+                        }
+                        
+                        if (foundId) {
+                            id = foundId;
+                        } else {
+                            // If NOT found in list after deep scan, retry addMagnet once with minimal hash
+                            console.warn('[RD][prepare] Torrent not found in deep scan. Retrying addMagnet with minimal hash...');
+                            const minimalMagnet = `magnet:?xt=urn:btih:${btih}`;
+                            const retryAdd = await rdFetch('/torrents/addMagnet', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                                body: new URLSearchParams({ magnet: minimalMagnet })
+                            });
+                            if (retryAdd?.id) {
+                                console.log('[RD][prepare] Retry addMagnet succeeded', { id: retryAdd.id });
+                                id = retryAdd.id;
+                            }
+                        }
+                    } catch (e) {
+                        console.warn('[RD][prepare] Fallback check failed:', e?.message);
+                    }
+                }
+
                 if (!id) return res.status(500).json({ error: 'Failed to add magnet' });
                 console.log('[RD][prepare] added', { id });
                 
