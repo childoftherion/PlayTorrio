@@ -1100,13 +1100,20 @@ async function tbFetch(endpoint, opts = {}) {
 
 // Create a torrent from magnet
 async function tbCreateTorrentFromMagnet(magnet) {
+    // Strip trackers and extra params, sending only the info hash for maximum compatibility
+    let cleanMagnet = magnet;
+    const hashMatch = magnet.match(/xt=urn:btih:[a-zA-Z0-9]{32,40}/i);
+    if (hashMatch) {
+        cleanMagnet = `magnet:?${hashMatch[0]}`;
+        console.log('[TB][prepare] Stripped magnet to hash only:', cleanMagnet);
+    }
+
     const attempts = [
-        { ep: '/api/torrents/createtorrent', type: 'form', body: { link: magnet } },
-        { ep: '/api/torrents/createtorrent', type: 'form', body: { magnet: magnet } },
-        { ep: '/api/torrents/createtorrent', type: 'json', body: { link: magnet } },
-        { ep: '/api/torrents/createtorrent', type: 'json', body: { magnet_link: magnet } },
-        { ep: '/api/torrents/addmagnet',     type: 'form', body: { link: magnet } },
-        { ep: '/api/torrents/addmagnet',     type: 'form', body: { magnet: magnet } },
+        { ep: '/api/torrents/createtorrent', type: 'form', body: { magnet: cleanMagnet } },
+        { ep: '/api/torrents/createtorrent', type: 'form', body: { link: cleanMagnet } },
+        { ep: '/api/torrents/createtorrent', type: 'json', body: { magnet: cleanMagnet } },
+        { ep: '/api/torrents/createtorrent', type: 'json', body: { link: cleanMagnet } },
+        { ep: '/api/torrents/createtorrent', type: 'json', body: { magnet_link: cleanMagnet } },
     ];
 
     let lastErr = null;
@@ -1124,7 +1131,10 @@ async function tbCreateTorrentFromMagnet(magnet) {
         } catch (e) {
             lastErr = e;
             const msg = (e?.message || '').toLowerCase();
-            if (/missing_required_option|missing|required/.test(msg)) continue;
+            // Continue if we hit an endpoint that doesn't exist or doesn't like the payload
+            if (/404|400|422|missing|required/.test(msg)) continue;
+            // Stop on auth/rate limit/etc
+            throw e;
         }
     }
 
