@@ -603,7 +603,23 @@ const displaySources = (sources) => {
                             console.log(`[TARGET MATCHED] ${fileName} (${(fileSize / 1024 / 1024).toFixed(2)} MB)`);
                             
                             // Unrestrict the specific file link
-                            const fileLink = (targetFile.links && targetFile.links[0]) || null;
+                            let fileLink = (targetFile.links && targetFile.links[0]) || null;
+                            
+                            // Real-Debrid Fallback: links are in info.links, not per-file
+                            if (!fileLink && debridSettings.debridProvider === 'realdebrid' && info.links && info.links.length > 0) {
+                                // The links array in RD corresponds 1:1 to selected files.
+                                // We need to find the index of our targetFile among only the SELECTED files.
+                                const selectedFiles = files.filter(f => f.selected === 1);
+                                const linkIndex = selectedFiles.indexOf(targetFile);
+                                
+                                if (linkIndex !== -1 && info.links[linkIndex]) {
+                                    fileLink = info.links[linkIndex];
+                                    console.log(`[Debrid] RD Link matched via selected-index [${linkIndex}]: ${fileLink}`);
+                                } else {
+                                    console.warn('[Debrid] Target file not found in selected files list or link missing.');
+                                }
+                            }
+
                             if (fileLink) {
                                 console.log('[Debrid] Unrestricting target file link...');
                                 const unres = await fetch('/api/debrid/link', {

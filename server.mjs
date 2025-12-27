@@ -354,109 +354,126 @@ export function startServer(userDataPath, executablePath = null, ffmpegBin = nul
     console.log(`[Transcoder] Active FFprobe: ${resolvedFfprobePath}`);
 
     const metadataCache = new Map();
+    const activeProbes = new Map();
 
     async function getVideoMetadata(videoUrl) {
-        if (metadataCache.has(videoUrl)) return metadataCache.get(videoUrl);
+        // Normalize URL for caching
+        const normalizedUrl = videoUrl.replace('localhost', '127.0.0.1');
         
-        // Use 127.0.0.1 instead of localhost for internal requests to avoid DNS/IPv6 issues
-        const targetUrl = videoUrl.replace('localhost', '127.0.0.1');
-        const isLocal = targetUrl.includes('127.0.0.1');
+        if (metadataCache.has(normalizedUrl)) return metadataCache.get(normalizedUrl);
         
-        const runProbe = () => new Promise((resolve, reject) => {
-            // Added reconnection flags and reduced analysis duration for stability
-            const args = [
-                '-hide_banner',
-                '-loglevel', 'error',
-                '-user_agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                '-print_format', 'json',
-                '-show_format',
-                '-show_streams',
-                '-reconnect', '1',
-                '-reconnect_streamed', '1',
-                '-reconnect_delay_max', '5',
-                '-analyzeduration', '5000000', 
-                '-probesize', '5000000'
-            ];
-
-            // Only add TorBox Referer for external links
-            if (!isLocal) {
-                args.push('-headers', 'Referer: https://torbox.app/\r\n');
-            }
-
-            args.push(targetUrl);
-            
-            console.log(`[FFprobe] Spawning: ${resolvedFfprobePath} ${args.join(' ')}`);
-            
-            const ffprobe = spawn(resolvedFfprobePath, args);
-            let stdout = '', stderr = '';
-            ffprobe.stdout.on('data', (d) => stdout += d.toString());
-            ffprobe.stderr.on('data', (d) => stderr += d.toString());
-            
-            ffprobe.on('error', (err) => {
-                console.error(`[FFprobe] Failed to spawn process:`, err.message);
-                reject(err);
-            });
-
-            ffprobe.on('close', (code, signal) => {
-                if (code !== 0) {
-                    const errorMsg = stderr || stdout || 'Unknown error';
-                    return reject(new Error(`ffprobe failed (code ${code}): ${errorMsg}`));
-                }
-                try {
-                    const data = JSON.parse(stdout);
-                    const videoStream = data.streams?.find(s => s.codec_type === 'video');
-                    const audioStreams = data.streams?.filter(s => s.codec_type === 'audio') || [];
-                    
-                    const meta = {
-                        duration: parseFloat(data.format?.duration) || 0,
-                        videoCodec: videoStream?.codec_name || 'unknown',
-                        width: videoStream?.width || 0,
-                        height: videoStream?.height || 0,
-                        audioTracks: audioStreams.map((s, index) => ({
-                            index: s.index,
-                            id: index, // Relative audio index for mapping
-                            codec: s.codec_name,
-                            language: s.tags?.language || 'und',
-                            title: s.tags?.title || `Track ${index + 1}`
-                        }))
-                    };
-                    metadataCache.set(videoUrl, meta);
-                    resolve(meta);
-                } catch (e) { 
-                    reject(new Error(`ffprobe JSON parse error: ${e.message} | Stdout: ${stdout.substring(0, 200)}`)); 
-                }
-            });
-
-            const timeout = setTimeout(() => { 
-                ffprobe.kill('SIGKILL'); 
-                reject(new Error('ffprobe timeout')); 
-            }, 30000); 
-
-            ffprobe.on('close', () => clearTimeout(timeout));
-        });
-
-        // Retry logic for WebTorrent or slow starts
-        let lastError = null;
-        for (let i = 0; i < 20; i++) {
-            try {
-                const meta = await runProbe();
-                console.log(`[FFprobe] Success after ${i+1} attempts`);
-                return meta;
-            } catch (err) {
-                lastError = err;
-                const msg = err.message || '';
-                // If 404, 403 or Invalid Data, it means the stream is not ready yet (common in WebTorrent)
-                if (msg.includes('404') || msg.includes('403') || msg.includes('Invalid data') || msg.includes('ffprobe failed')) {
-                    console.log(`[FFprobe] Stream not ready (Attempt ${i+1}/20), waiting 3s... Error: ${msg.substring(0, 100)}`);
-                    await new Promise(r => setTimeout(r, 3000));
-                } else {
-                    console.error('[FFprobe] Terminal error:', msg);
-                    throw err; // Terminal error
-                }
-            }
+        // If there's already a probe running for this URL, wait for it
+        if (activeProbes.has(normalizedUrl)) {
+            console.log(`[FFprobe] Awaiting active probe for: ${normalizedUrl.substring(0, 80)}...`);
+            return activeProbes.get(normalizedUrl);
         }
-        console.error(`[FFprobe] Failed after maximum retries. Last error: ${lastError.message}`);
-        throw lastError;
+
+        const probePromise = (async () => {
+            try {
+                const targetUrl = normalizedUrl;
+                const isLocal = targetUrl.includes('127.0.0.1');
+                
+                const runProbe = () => new Promise((resolve, reject) => {
+                    const args = [
+                        '-hide_banner',
+                        '-loglevel', 'error',
+                        '-user_agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                        '-print_format', 'json',
+                        '-show_format',
+                        '-show_streams',
+                        '-reconnect', '1',
+                        '-reconnect_streamed', '1',
+                        '-reconnect_delay_max', '5',
+                        '-analyzeduration', '10000000', 
+                        '-probesize', '10000000'
+                    ];
+
+                    // Only add TorBox Referer for TorBox links
+                    if (targetUrl.includes('torbox')) {
+                        args.push('-headers', 'Referer: https://torbox.app/\r\n');
+                    }
+
+                    args.push(targetUrl);
+                    
+                    console.log(`[FFprobe] Spawning: ${resolvedFfprobePath} ${args.join(' ')}`);
+                    
+                    const ffprobe = spawn(resolvedFfprobePath, args);
+                    let stdout = '', stderr = '';
+                    ffprobe.stdout.on('data', (d) => stdout += d.toString());
+                    ffprobe.stderr.on('data', (d) => stderr += d.toString());
+                    
+                    ffprobe.on('error', (err) => {
+                        console.error(`[FFprobe] Failed to spawn process:`, err.message);
+                        reject(err);
+                    });
+
+                    ffprobe.on('close', (code, signal) => {
+                        if (code !== 0) {
+                            const errorMsg = stderr || stdout || 'Unknown error';
+                            return reject(new Error(`ffprobe failed (code ${code}): ${errorMsg}`));
+                        }
+                        try {
+                            const data = JSON.parse(stdout);
+                            const videoStream = data.streams?.find(s => s.codec_type === 'video');
+                            const audioStreams = data.streams?.filter(s => s.codec_type === 'audio') || [];
+                            
+                            const meta = {
+                                duration: parseFloat(data.format?.duration) || 0,
+                                videoCodec: videoStream?.codec_name || 'unknown',
+                                width: videoStream?.width || 0,
+                                height: videoStream?.height || 0,
+                                audioTracks: audioStreams.map((s, index) => ({
+                                    index: s.index,
+                                    id: index, // Relative audio index for mapping
+                                    codec: s.codec_name,
+                                    language: s.tags?.language || 'und',
+                                    title: s.tags?.title || `Track ${index + 1}`
+                                }))
+                            };
+                            metadataCache.set(normalizedUrl, meta);
+                            resolve(meta);
+                        } catch (e) { 
+                            reject(new Error(`ffprobe JSON parse error: ${e.message} | Stdout: ${stdout.substring(0, 200)}`)); 
+                        }
+                    });
+
+                    const timeout = setTimeout(() => { 
+                        ffprobe.kill('SIGKILL'); 
+                        reject(new Error('ffprobe timeout')); 
+                    }, 45000); // Increased timeout to 45s for slow servers
+
+                    ffprobe.on('close', () => clearTimeout(timeout));
+                });
+
+                // Retry logic for WebTorrent or slow starts
+                let lastError = null;
+                for (let i = 0; i < 25; i++) { // Increased retries to 25
+                    try {
+                        const meta = await runProbe();
+                        console.log(`[FFprobe] Success after ${i+1} attempts`);
+                        return meta;
+                    } catch (err) {
+                        lastError = err;
+                        const msg = err.message || '';
+                        // If 404, 403, timeout or Invalid Data, it means the stream is not ready yet
+                        if (msg.includes('404') || msg.includes('403') || msg.includes('Invalid data') || msg.includes('ffprobe failed') || msg.includes('timeout')) {
+                            console.log(`[FFprobe] Stream not ready (Attempt ${i+1}/25), waiting 3s... Error: ${msg.substring(0, 100)}`);
+                            await new Promise(r => setTimeout(r, 3000));
+                        } else {
+                            console.error('[FFprobe] Terminal error:', msg);
+                            throw err; // Terminal error
+                        }
+                    }
+                }
+                console.error(`[FFprobe] Failed after maximum retries. Last error: ${lastError.message}`);
+                throw lastError;
+            } finally {
+                activeProbes.delete(normalizedUrl);
+            }
+        })();
+
+        activeProbes.set(normalizedUrl, probePromise);
+        return probePromise;
     }
 
     app.get('/api/transcode/metadata', async (req, res) => {
@@ -488,10 +505,12 @@ export function startServer(userDataPath, executablePath = null, ffmpegBin = nul
             'Transfer-Encoding': 'chunked'
         });
 
-        // Trigger metadata fetch in background (don't await)
-        getVideoMetadata(videoUrl).catch(e => {
-            console.warn('[Transcoder] Background metadata fetch failed:', e.message);
-        });
+        // Trigger metadata fetch in background (don't await) if not already cached
+        if (!metadataCache.has(videoUrl)) {
+            getVideoMetadata(videoUrl).catch(e => {
+                console.warn('[Transcoder] Background metadata fetch failed:', e.message);
+            });
+        }
 
         // Quality Presets
         let videoBitrate = '2500k';
@@ -1866,6 +1885,20 @@ async function tbGetStreamUrl(torrentId, timeout = 30_000) {
                             const match = existing.find(t => (t?.hash || '').toLowerCase() === btih.toLowerCase());
                             if (match && match.id) {
                                 console.log('[RD][prepare] Reusing existing torrent (found in page 1)', { id: match.id, status: match.status });
+                                
+                                // Ensure files are selected so links are generated, even on reuse
+                                if (match.status === 'downloaded' || match.status === 'waiting_files_selection') {
+                                    try {
+                                        await rdFetch(`/torrents/selectFiles/${match.id}`, {
+                                            method: 'POST',
+                                            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                                            body: new URLSearchParams({ files: 'all' })
+                                        });
+                                    } catch (e) {
+                                        console.warn('[RD][prepare] Failed to select files on reuse:', e?.message);
+                                    }
+                                }
+
                                 let info = await rdFetch(`/torrents/info/${match.id}`);
                                 return res.json({ id: match.id, info, reused: true });
                             }
