@@ -9,14 +9,14 @@ import {
   getImageUrl,
   searchMulti
 } from './api.js';
-import { getJackettKey, setJackettKey } from './jackett.js';
+import { getJackettKey, setJackettKey, getJackettSettings } from './jackett.js';
 import { getInstalledAddons, installAddon, removeAddon } from './addons.js';
 import { initComics } from './comics.js';
 import { initDebridUI } from './debrid.js';
 
 // DOM Elements
 let contentRows, searchResultsContainer, searchGrid, searchInput, heroSection, heroBackdrop, heroTitle, heroOverview, heroInfoBtn;
-let settingsBtn, settingsModal, settingsContent, closeSettingsBtn, saveSettingsBtn, jackettApiInput;
+let settingsBtn, settingsModal, settingsContent, closeSettingsBtn, saveSettingsBtn, jackettApiInput, jackettUrlInput;
 let addonManifestInput, installAddonBtn, installedAddonsList, addonItemTemplate;
 let rowTemplate, cardTemplate;
 
@@ -37,6 +37,7 @@ const syncHomeElements = () => {
     closeSettingsBtn = document.getElementById('close-settings');
     saveSettingsBtn = document.getElementById('save-settings');
     jackettApiInput = document.getElementById('jackett-api-input');
+    jackettUrlInput = document.getElementById('jackett-url-input');
 
     addonManifestInput = document.getElementById('addon-manifest-input');
     installAddonBtn = document.getElementById('install-addon-btn');
@@ -391,6 +392,8 @@ const renderAddonsList = async () => {
 // Settings Logic
 const openSettings = async () => {
     jackettApiInput.value = await getJackettKey() || '';
+    const settings = await getJackettSettings();
+    if (jackettUrlInput) jackettUrlInput.value = settings.jackettUrl || '';
     await renderAddonsList();
     await initDebridUI();
     settingsModal.classList.remove('hidden');
@@ -460,10 +463,25 @@ document.addEventListener('DOMContentLoaded', () => {
 
     saveSettingsBtn?.addEventListener('click', async () => {
         const key = jackettApiInput.value.trim();
-        if (key) {
+        const url = jackettUrlInput ? jackettUrlInput.value.trim() : null;
+
+        if (key && !key.includes('*')) {
             await setJackettKey(key);
-            closeSettings();
         }
+
+        if (url !== null) {
+            try {
+                await fetch('/api/settings', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ jackettUrl: url })
+                });
+            } catch (e) {
+                console.error("Failed to save Jackett URL", e);
+            }
+        }
+
+        closeSettings();
     });
 
     installAddonBtn?.addEventListener('click', async () => {

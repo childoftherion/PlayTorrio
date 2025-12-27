@@ -274,14 +274,14 @@ export function startServer(userDataPath, executablePath = null, ffmpegBin = nul
     // Proxy for Jackett (Added for Basic Mode)
     app.get('/api/jackett', async (req, res) => {
         let { apikey, q, t } = req.query;
-        const JACKETT_API_URL = 'http://127.0.0.1:9117/api/v2.0/indexers/all/results/torznab';
         
         // If apikey is masked (contains *) or missing, use the internal API_KEY
         if (!apikey || apikey.includes('*')) {
+            if (!API_KEY) loadAPIKey();
             apikey = API_KEY;
         }
 
-        const url = new URL(JACKETT_API_URL);
+        const url = new URL(JACKETT_URL);
         if (apikey) url.searchParams.append('apikey', apikey);
         if (q) url.searchParams.append('q', q);
         if (t) url.searchParams.append('t', t);
@@ -4404,6 +4404,14 @@ for (let i = 0; i < 10; i++) {
     app.post('/api/set-api-key', (req, res) => {
         if (!req.body.apiKey) return res.status(400).json({ error: 'Invalid API key' });
         const key = req.body.apiKey.trim();
+
+        // If the key is masked, don't overwrite the existing one
+        if (key.includes('*')) {
+            return res.json({ 
+                success: true, 
+                message: 'API key is masked, not updating' 
+            });
+        }
         
         console.log('[API Key] Save request received');
         

@@ -128,6 +128,12 @@
             </div>
 
             <div class="mb-6">
+                <label class="block text-gray-400 text-sm font-medium mb-2">Jackett Base URL</label>
+                <input type="text" id="jackett-url-input" class="w-full bg-black/50 border border-gray-700 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-primary-purple focus:ring-1 focus:ring-primary-purple transition-all" placeholder="http://127.0.0.1:9117/api/v2.0/indexers/all/results/torznab">
+                <p class="text-gray-500 text-xs mt-2">Default: http://127.0.0.1:9117/api/v2.0/indexers/all/results/torznab</p>
+            </div>
+
+            <div class="mb-6">
                 <label class="block text-gray-400 text-sm font-medium mb-2">Stremio Addons</label>
                 <div class="flex gap-2 mb-3">
                     <input type="text" id="addon-manifest-input" class="flex-1 bg-black/50 border border-gray-700 rounded-lg px-4 py-2 text-sm text-white focus:outline-none focus:border-primary-purple transition-all" placeholder="https://addon.com/manifest.json">

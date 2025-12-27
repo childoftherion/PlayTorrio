@@ -8,7 +8,7 @@ import {
     getEpisodeImages,
     getExternalIds
 } from './api.js';
-import { searchJackett, getJackettKey, setJackettKey } from './jackett.js';
+import { searchJackett, getJackettKey, setJackettKey, getJackettSettings } from './jackett.js';
 import { getInstalledAddons, installAddon, removeAddon, fetchAddonStreams, parseAddonStream } from './addons.js';
 import { initDebridUI, getDebridSettings } from './debrid.js';
 
@@ -68,6 +68,7 @@ const closeSettingsBtn = document.getElementById('close-settings');
 const saveSettingsBtn = document.getElementById('save-settings');
 const toggleConsoleBtn = document.getElementById('toggle-console-btn');
 const jackettApiInput = document.getElementById('jackett-api-input');
+const jackettUrlInput = document.getElementById('jackett-url-input');
 const addonManifestInput = document.getElementById('addon-manifest-input');
 const installAddonBtn = document.getElementById('install-addon-btn');
 const installedAddonsList = document.getElementById('installed-addons-list');
@@ -806,7 +807,10 @@ const loadEpisodes = async (seasonNum) => {
 const init = async () => {
     // Settings Modal
     if (settingsBtn) {
-        settingsBtn.onclick = () => {
+        settingsBtn.onclick = async () => {
+            jackettApiInput.value = await getJackettKey() || '';
+            const settings = await getJackettSettings();
+            if (jackettUrlInput) jackettUrlInput.value = settings.jackettUrl || '';
             settingsModal.classList.remove('hidden');
             setTimeout(() => settingsModal.classList.remove('opacity-0'), 10);
         };
@@ -822,9 +826,24 @@ const init = async () => {
     if (saveSettingsBtn) {
         saveSettingsBtn.onclick = async () => {
             const key = jackettApiInput.value.trim();
-            if (key) {
+            const url = jackettUrlInput ? jackettUrlInput.value.trim() : null;
+
+            if (key && !key.includes('*')) {
                 await setJackettKey(key);
             }
+
+            if (url !== null) {
+                try {
+                    await fetch('/api/settings', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ jackettUrl: url })
+                    });
+                } catch (e) {
+                    console.error("Failed to save Jackett URL", e);
+                }
+            }
+
             settingsModal.classList.add('opacity-0');
             setTimeout(() => settingsModal.classList.add('hidden'), 300);
         };

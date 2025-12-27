@@ -18,7 +18,7 @@ export const getJackettKey = async () => {
 
 export const setJackettKey = async (key) => {
     try {
-        const response = await fetch(`${API_BASE}/save-api-key`, {
+        const response = await fetch(`${API_BASE}/set-api-key`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ apiKey: key })
