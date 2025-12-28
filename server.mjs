@@ -553,6 +553,9 @@ export function startServer(userDataPath, executablePath = null, ffmpegBin = nul
 
         const args = [
             '-user_agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            '-fflags', '+genpts+discardcorrupt+fastseek',
+            '-probesize', '10M',
+            '-analyzeduration', '10M',
             '-ss', start.toString(),
             '-i', targetUrl,
             '-reconnect', '1', 
@@ -563,23 +566,20 @@ export function startServer(userDataPath, executablePath = null, ffmpegBin = nul
             '-map', '0:v:0',
             '-map', `0:a:${audioTrack}`,
             '-c:v', 'libx264', '-preset', preset, '-tune', 'zerolatency',
-            '-pix_fmt', 'yuv420p'
+            '-pix_fmt', 'yuv420p',
+            '-avoid_negative_ts', 'make_zero',
+            '-max_muxing_queue_size', '1024'
         ];
 
-        // Only add TorBox Referer for external links
-        if (!targetUrl.includes('127.0.0.1')) {
-            args.splice(2, 0, '-headers', 'Referer: https://torbox.app/\r\n');
-        }
-
-        // Only apply scale filter if defined (not native)
-        if (scaleFilter) {
-            args.push('-vf', scaleFilter);
-        }
+        // ... lines omitted for context ...
 
         args.push(
             '-b:v', videoBitrate, '-maxrate', maxRate, '-bufsize', bufSize,
             '-c:a', 'aac', '-b:a', '128k', '-ac', '2', '-ar', '44100',
-            '-movflags', 'frag_keyframe+empty_moov+default_base_moof+faststart',
+            '-af', 'aresample=async=1:min_hard_comp=0.100000:first_pts=0',
+            '-movflags', 'frag_keyframe+empty_moov+default_base_moof+frag_discont+delay_moov',
+            '-frag_duration', '1000000',
+            '-vsync', '1',
             '-f', 'mp4', '-'
         );
 
