@@ -359,18 +359,39 @@ export function startServer(userDataPath, executablePath = null, ffmpegBin = nul
 
     console.log(`[Transcoder] Active FFmpeg: ${resolvedFfmpegPath}`);
     console.log(`[Transcoder] Active FFprobe: ${resolvedFfprobePath}`);
+    console.log(`[Transcoder] Platform: ${process.platform}`);
 
-    // Detect best encoder on startup
+    // Detect best encoder on startup - CROSS-PLATFORM
     const detectBestEncoder = async () => {
         console.log('[Transcoder] Detecting hardware acceleration...');
         
-        // Ordered by preference: NVENC > QSV > AMF > Software (skip MediaFoundation - unreliable)
-        const encoders = [
-            { name: 'h264_nvenc', type: 'cuda', desc: 'NVIDIA NVENC' },
-            { name: 'h264_qsv', type: 'qsv', desc: 'Intel QuickSync' },
-            { name: 'h264_amf', type: 'd3d11va', desc: 'AMD AMF' }
-            // Note: h264_mf (MediaFoundation) is skipped - it's unreliable and often slower than x264
-        ];
+        // Platform-specific encoder list
+        // Windows: NVENC > QSV > AMF
+        // macOS: VideoToolbox > (no other HW options)
+        // Linux: NVENC > VAAPI > QSV
+        const platform = process.platform;
+        let encoders = [];
+        
+        if (platform === 'darwin') {
+            // macOS - VideoToolbox is the only option
+            encoders = [
+                { name: 'h264_videotoolbox', hwaccel: 'videotoolbox', desc: 'Apple VideoToolbox' }
+            ];
+        } else if (platform === 'linux') {
+            // Linux - NVENC (if NVIDIA), VAAPI (Intel/AMD), QSV (Intel)
+            encoders = [
+                { name: 'h264_nvenc', hwaccel: 'cuda', desc: 'NVIDIA NVENC' },
+                { name: 'h264_vaapi', hwaccel: 'vaapi', desc: 'VAAPI (Intel/AMD)' },
+                { name: 'h264_qsv', hwaccel: 'qsv', desc: 'Intel QuickSync' }
+            ];
+        } else {
+            // Windows - NVENC > QSV > AMF
+            encoders = [
+                { name: 'h264_nvenc', hwaccel: 'cuda', desc: 'NVIDIA NVENC' },
+                { name: 'h264_qsv', hwaccel: 'qsv', desc: 'Intel QuickSync' },
+                { name: 'h264_amf', hwaccel: 'd3d11va', desc: 'AMD AMF' }
+            ];
+        }
 
         for (const enc of encoders) {
             try {
@@ -412,6 +433,12 @@ export function startServer(userDataPath, executablePath = null, ffmpegBin = nul
                 } else if (enc.name.includes('amf')) {
                     encoderPreset = 'speed';
                     hwAccel = 'd3d11va';
+                } else if (enc.name.includes('videotoolbox')) {
+                    encoderPreset = 'fast'; // VideoToolbox uses different preset names
+                    hwAccel = 'videotoolbox';
+                } else if (enc.name.includes('vaapi')) {
+                    encoderPreset = 'fast';
+                    hwAccel = 'vaapi';
                 }
                 return;
             } catch (e) {
@@ -493,17 +520,44 @@ export function startServer(userDataPath, executablePath = null, ffmpegBin = nul
                             const videoStream = data.streams?.find(s => s.codec_type === 'video');
                             const audioStreams = data.streams?.filter(s => s.codec_type === 'audio') || [];
                             
+                            const videoCodec = videoStream?.codec_name || 'unknown';
+                            const audioCodecs = audioStreams.map(s => s.codec_name);
+                            
+                            // Check if codecs are web-compatible (can be remuxed without transcoding)
+                            // Web-compatible video: h264, hevc (h265), vp8, vp9, av1
+                            // Web-compatible audio: aac, mp3, opus, vorbis, flac
+                            const webCompatibleVideo = ['h264', 'hevc', 'vp8', 'vp9', 'av1'].includes(videoCodec);
+                            const webCompatibleAudio = audioCodecs.length === 0 || audioCodecs.some(c => 
+                                ['aac', 'mp3', 'opus', 'vorbis', 'flac'].includes(c)
+                            );
+                            const canRemux = webCompatibleVideo && webCompatibleAudio;
+                            
+                            // Find the first web-compatible audio track index
+                            let webCompatibleAudioIndex = 0;
+                            for (let i = 0; i < audioStreams.length; i++) {
+                                if (['aac', 'mp3', 'opus', 'vorbis', 'flac'].includes(audioStreams[i].codec_name)) {
+                                    webCompatibleAudioIndex = i;
+                                    break;
+                                }
+                            }
+                            
                             const meta = {
                                 duration: parseFloat(data.format?.duration) || 0,
-                                videoCodec: videoStream?.codec_name || 'unknown',
+                                videoCodec: videoCodec,
                                 width: videoStream?.width || 0,
                                 height: videoStream?.height || 0,
+                                // Web compatibility info
+                                canRemux: canRemux,
+                                webCompatibleVideo: webCompatibleVideo,
+                                webCompatibleAudio: webCompatibleAudio,
+                                webCompatibleAudioIndex: webCompatibleAudioIndex,
                                 audioTracks: audioStreams.map((s, index) => ({
                                     index: s.index,
                                     id: index, // Relative audio index for mapping
                                     codec: s.codec_name,
                                     language: s.tags?.language || 'und',
-                                    title: s.tags?.title || `Track ${index + 1}`
+                                    title: s.tags?.title || `Track ${index + 1}`,
+                                    webCompatible: ['aac', 'mp3', 'opus', 'vorbis', 'flac'].includes(s.codec_name)
                                 }))
                             };
                             metadataCache.set(normalizedUrl, meta);
@@ -559,6 +613,104 @@ export function startServer(userDataPath, executablePath = null, ffmpegBin = nul
         }
     });
 
+    // ============================================================================
+    // REMUX ENDPOINT - Fast stream copy for web-compatible codecs
+    // No transcoding, just repackages into fragmented MP4 container
+    // ============================================================================
+    app.get('/api/transcode/remux', async (req, res) => {
+        const { url: videoUrl, start = 0, audioTrack = 0 } = req.query;
+        if (!videoUrl) return res.status(400).send('Missing url');
+
+        const targetUrl = videoUrl.replace('localhost', '127.0.0.1');
+        
+        console.log(`[Remux] Request: ${start}s - Fast stream copy (no transcoding)`);
+        
+        res.writeHead(200, {
+            'Content-Type': 'video/mp4',
+            'Cache-Control': 'no-cache, no-store, must-revalidate',
+            'Pragma': 'no-cache',
+            'Expires': '0',
+            'Connection': 'keep-alive',
+            'Accept-Ranges': 'bytes',
+            'Transfer-Encoding': 'chunked',
+            'X-Content-Type-Options': 'nosniff'
+        });
+
+        const args = [
+            '-hide_banner', '-loglevel', 'warning',
+            
+            // Input optimization
+            '-user_agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            '-fflags', '+genpts+discardcorrupt+fastseek+nobuffer',
+            '-flags', 'low_delay',
+            '-probesize', '32M',
+            '-analyzeduration', '32M',
+            
+            // Seek BEFORE input for faster startup
+            '-ss', start.toString(),
+            
+            // Reconnection for network streams
+            '-reconnect', '1',
+            '-reconnect_streamed', '1',
+            '-reconnect_on_network_error', '1',
+            '-reconnect_at_eof', '1',
+            '-reconnect_delay_max', '3',
+            '-i', targetUrl,
+            
+            // Stream mapping
+            '-map', '0:v:0',
+            '-map', `0:a:${audioTrack}?`,
+            
+            // COPY streams - no transcoding!
+            '-c:v', 'copy',
+            '-c:a', 'copy',
+            
+            // Fragmented MP4 for instant playback
+            '-movflags', 'frag_keyframe+empty_moov+default_base_moof+faststart+delay_moov',
+            '-frag_duration', '1000000',  // 1s fragments
+            
+            // Output
+            '-f', 'mp4',
+            '-'
+        ];
+
+        const ffmpeg = spawn(resolvedFfmpegPath, args, {
+            stdio: ['ignore', 'pipe', 'pipe']
+        });
+        
+        ffmpeg.stdout.pipe(res);
+        
+        ffmpeg.stderr.on('data', (data) => {
+            const msg = data.toString().trim();
+            if (msg.includes('buffer underflow') || 
+                msg.includes('Past duration') ||
+                msg.includes('Discarding') ||
+                msg.includes('deprecated')) return;
+            if (msg.toLowerCase().includes('error') || msg.toLowerCase().includes('fatal')) {
+                console.error('[Remux Error]', msg);
+            }
+        });
+
+        res.on('close', () => {
+            if (!ffmpeg.killed) {
+                ffmpeg.kill('SIGKILL');
+            }
+        });
+
+        ffmpeg.on('error', (err) => {
+            console.error('[Remux Process Error]', err.message);
+            if (!res.writableEnded) {
+                res.end();
+            }
+        });
+
+        ffmpeg.on('exit', (code, signal) => {
+            if (code !== 0 && code !== null && signal !== 'SIGKILL') {
+                console.warn(`[Remux] Exited with code ${code}, signal ${signal}`);
+            }
+        });
+    });
+
     // Encoder status endpoint - shows current hardware acceleration status
     app.get('/api/transcode/status', (req, res) => {
         const isHW = bestEncoder !== 'libx264';
@@ -566,6 +718,8 @@ export function startServer(userDataPath, executablePath = null, ffmpegBin = nul
         if (bestEncoder.includes('nvenc')) encoderType = 'NVIDIA NVENC';
         else if (bestEncoder.includes('qsv')) encoderType = 'Intel QuickSync';
         else if (bestEncoder.includes('amf')) encoderType = 'AMD AMF';
+        else if (bestEncoder.includes('videotoolbox')) encoderType = 'Apple VideoToolbox';
+        else if (bestEncoder.includes('vaapi')) encoderType = 'VAAPI';
         else if (bestEncoder.includes('mf')) encoderType = 'Windows MediaFoundation';
         
         res.json({
@@ -573,6 +727,7 @@ export function startServer(userDataPath, executablePath = null, ffmpegBin = nul
             encoderType,
             preset: encoderPreset,
             hwAccel: hwAccel,
+            platform: process.platform,
             isHardwareAccelerated: isHW,
             capabilities: {
                 native: true,
@@ -584,13 +739,19 @@ export function startServer(userDataPath, executablePath = null, ffmpegBin = nul
     });
 
     app.get('/api/transcode/stream', async (req, res) => {
-        const { url: videoUrl, start = 0, audioTrack = 0, quality = 'mid' } = req.query;
+        const { url: videoUrl, start = 0, audioTrack = 0, quality = 'mid', forceSoftware = 'false' } = req.query;
         if (!videoUrl) return res.status(400).send('Missing url');
 
         // Use 127.0.0.1 for internal requests
         const targetUrl = videoUrl.replace('localhost', '127.0.0.1');
 
-        console.log(`[Transcoder] Request: ${start}s [Q: ${quality}] [Enc: ${bestEncoder}]`);
+        // Allow forcing software encoding as fallback when hardware fails
+        const useSoftware = forceSoftware === 'true' || forceSoftware === '1';
+        const activeEncoder = useSoftware ? 'libx264' : bestEncoder;
+        const activePreset = useSoftware ? 'superfast' : encoderPreset;
+        const activeHwAccel = useSoftware ? 'auto' : hwAccel;
+
+        console.log(`[Transcoder] Request: ${start}s [Q: ${quality}] [Enc: ${activeEncoder}]${useSoftware ? ' (SOFTWARE FALLBACK)' : ''}`);
         
         res.writeHead(200, {
             'Content-Type': 'video/mp4',
@@ -611,15 +772,17 @@ export function startServer(userDataPath, executablePath = null, ffmpegBin = nul
         }
 
         // HW Encoders often need slightly higher bitrate for same visual quality
-        const isHW = bestEncoder !== 'libx264';
-        const isNVENC = bestEncoder.includes('nvenc');
-        const isQSV = bestEncoder.includes('qsv');
-        const isAMF = bestEncoder.includes('amf');
+        const isHW = activeEncoder !== 'libx264';
+        const isNVENC = activeEncoder.includes('nvenc');
+        const isQSV = activeEncoder.includes('qsv');
+        const isAMF = activeEncoder.includes('amf');
+        const isVideoToolbox = activeEncoder.includes('videotoolbox');
+        const isVAAPI = activeEncoder.includes('vaapi');
 
         // ============ OPTIMIZED QUALITY PROFILES ============
         // Tuned for best quality-to-speed ratio per encoder type
         let videoBitrate, maxRate, bufSize, scaleFilter, crf;
-        let preset = encoderPreset;
+        let preset = activePreset;
 
         switch (quality) {
             case 'native':
@@ -669,14 +832,29 @@ export function startServer(userDataPath, executablePath = null, ffmpegBin = nul
             '-ss', start.toString(),
         ];
 
-        // Hardware acceleration input decoding
-        if (isNVENC) {
-            args.push('-hwaccel', 'cuda', '-hwaccel_output_format', 'cuda');
-        } else if (isQSV) {
-            args.push('-hwaccel', 'qsv', '-hwaccel_output_format', 'qsv');
-        } else if (isAMF) {
-            args.push('-hwaccel', 'd3d11va');
+        // Hardware acceleration input decoding (only if not forcing software)
+        if (!useSoftware) {
+            if (isNVENC) {
+                args.push('-hwaccel', 'cuda', '-hwaccel_output_format', 'cuda');
+            } else if (isQSV) {
+                args.push('-hwaccel', 'qsv', '-hwaccel_output_format', 'qsv');
+            } else if (isAMF) {
+                args.push('-hwaccel', 'd3d11va');
+            } else if (isVideoToolbox) {
+                args.push('-hwaccel', 'videotoolbox');
+            } else if (isVAAPI) {
+                // VAAPI needs device specification on some systems
+                args.push('-hwaccel', 'vaapi', '-hwaccel_output_format', 'vaapi');
+                // Try common VAAPI device paths
+                const fs = require('fs');
+                if (fs.existsSync('/dev/dri/renderD128')) {
+                    args.push('-vaapi_device', '/dev/dri/renderD128');
+                }
+            } else {
+                args.push('-hwaccel', 'auto');
+            }
         } else {
+            // Software mode - use auto hwaccel for decoding only (not encoding)
             args.push('-hwaccel', 'auto');
         }
 
@@ -694,11 +872,11 @@ export function startServer(userDataPath, executablePath = null, ffmpegBin = nul
             '-map', `0:a:${audioTrack}?`, // ? makes it optional
             
             // Video encoder
-            '-c:v', bestEncoder
+            '-c:v', activeEncoder
         );
 
         // ============ ENCODER-SPECIFIC OPTIMIZATIONS ============
-        const isMF = bestEncoder.includes('mf');
+        const isMF = activeEncoder.includes('mf');
         
         if (isNVENC) {
             // NVIDIA NVENC - Optimized for low latency streaming
@@ -729,13 +907,25 @@ export function startServer(userDataPath, executablePath = null, ffmpegBin = nul
                 '-rc', 'vbr_latency',
                 '-bf', '0'
             );
+        } else if (isVideoToolbox) {
+            // Apple VideoToolbox (macOS)
+            args.push(
+                '-realtime', '1',          // Prioritize speed
+                '-allow_sw', '1',          // Allow software fallback if needed
+                '-bf', '0'                 // No B-frames for lowest latency
+            );
+        } else if (isVAAPI) {
+            // VAAPI (Linux Intel/AMD)
+            args.push(
+                '-bf', '0'                 // No B-frames for lowest latency
+            );
         } else if (isMF) {
             // Windows MediaFoundation - minimal options, it's picky
             args.push(
                 '-bf', '0'
             );
         } else {
-            // Software x264 - Optimized for speed
+            // Software x264 - Optimized for speed (UNIVERSAL FALLBACK)
             args.push(
                 '-preset', 'superfast',    // Good balance of speed/quality
                 '-tune', 'zerolatency',    // Minimize latency
@@ -763,6 +953,12 @@ export function startServer(userDataPath, executablePath = null, ffmpegBin = nul
                 const heightMatch = scaleFilter.match(/:(\d+)/);
                 if (heightMatch) {
                     filters.push(`scale_cuda=-2:${heightMatch[1]}:interp_algo=lanczos`);
+                }
+            } else if (isVAAPI) {
+                // Use VAAPI scaling for VAAPI
+                const heightMatch = scaleFilter.match(/:(\d+)/);
+                if (heightMatch) {
+                    filters.push(`scale_vaapi=-2:${heightMatch[1]}`);
                 }
             } else {
                 filters.push(scaleFilter);

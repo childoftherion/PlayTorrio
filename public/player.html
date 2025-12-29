@@ -506,9 +506,13 @@
         let currentQuality = 'mid';
         let retryCount = 0;
         const MAX_RETRIES = 10;
+        const SOFTWARE_FALLBACK_THRESHOLD = 3; // Switch to software after 3 hardware failures
+        let useSoftwareFallback = false;
         let lastAbsoluteTime = 0;
         let playbackStableTimer = null;
         let encoderInfo = null;
+        let useRemux = false; // True if source has web-compatible codecs
+        let sourceMetadata = null; // Cached metadata for current source
 
         // --- Initialization ---
         if (videoUrl) {
@@ -524,13 +528,15 @@
             .then(r => r.json())
             .then(data => {
                 encoderInfo = data;
-                console.log(`[Player] Encoder: ${data.encoderType} (${data.encoder})`);
+                console.log(`[Player] Encoder: ${data.encoderType} (${data.encoder}) on ${data.platform}`);
                 // Update transcode badge with encoder info
                 const badge = document.getElementById('transcode-badge');
                 if (badge && data.isHardwareAccelerated) {
                     badge.textContent = data.encoderType.includes('NVIDIA') ? 'NVENC' : 
                                        data.encoderType.includes('Intel') ? 'QSV' :
-                                       data.encoderType.includes('AMD') ? 'AMF' : 'HW';
+                                       data.encoderType.includes('AMD') ? 'AMF' : 
+                                       data.encoderType.includes('Apple') ? 'VT' :
+                                       data.encoderType.includes('VAAPI') ? 'VAAPI' : 'HW';
                     badge.title = `Hardware Accelerated: ${data.encoderType}`;
                 }
             })
@@ -540,43 +546,121 @@
             document.getElementById('loading-spinner').style.display = 'block';
             lastAbsoluteTime = start || 0; 
             
-            // Start streaming immediately - Always Transcode per user request
-            console.log('Player: Starting stream immediately (Always Transcoding)');
-            isTranscoding = true;
-            updateTranscodeUI();
-            loadTranscodedStream(url, start);
-
-            // Fetch metadata in background for UI details (audio tracks, duration)
+            console.log('Player: Checking source codec compatibility...');
+            
+            // First, fetch metadata to check codec compatibility
             try {
                 const metaRes = await fetch(`http://127.0.0.1:6987/api/transcode/metadata?url=${encodeURIComponent(url)}`);
                 if (metaRes.ok) {
-                    const metadata = await metaRes.json();
-                    if (metadata.duration) videoDuration = metadata.duration;
-                    if (metadata.audioTracks) {
-                        audioTracks = metadata.audioTracks;
+                    sourceMetadata = await metaRes.json();
+                    if (sourceMetadata.duration) videoDuration = sourceMetadata.duration;
+                    if (sourceMetadata.audioTracks) {
+                        audioTracks = sourceMetadata.audioTracks;
                         renderAudioTracks();
+                    }
+                    
+                    // Check if we can use fast remux (web-compatible codecs)
+                    if (sourceMetadata.canRemux) {
+                        console.log(`Player: ✅ Web-compatible codecs detected (${sourceMetadata.videoCodec}) - using fast REMUX`);
+                        useRemux = true;
+                        
+                        // Update badge to show REMUX mode
+                        const badge = document.getElementById('transcode-badge');
+                        if (badge) {
+                            badge.textContent = 'REMUX';
+                            badge.title = `Fast Remux: ${sourceMetadata.videoCodec.toUpperCase()} (no transcoding)`;
+                            badge.style.background = 'linear-gradient(135deg, #10b981, #059669)'; // Green for remux
+                        }
+                    } else {
+                        console.log(`Player: ⚠️ Incompatible codec (${sourceMetadata.videoCodec}) - using transcoding`);
+                        useRemux = false;
                     }
                 }
             } catch (e) {
-                console.error('Background metadata fetch failed:', e);
+                console.warn('Metadata fetch failed, defaulting to transcode:', e.message);
+                useRemux = false;
             }
+            
+            // Start streaming
+            isTranscoding = true;
+            updateTranscodeUI();
+            loadSmartStream(url, start);
         }
 
         function fallbackToTranscoder(url, start) {
             if (isTranscoding) return;
             isTranscoding = true;
             updateTranscodeUI();
-            loadTranscodedStream(url, start);
+            loadSmartStream(url, start);
+        }
+        
+        // Smart stream loader - uses remux for compatible codecs, transcode for others
+        function loadSmartStream(url, start) {
+            if (useRemux) {
+                loadRemuxStream(url, start);
+            } else {
+                loadTranscodedStream(url, start);
+            }
+        }
+        
+        // Fast remux - just repackages into MP4 container, no transcoding
+        function loadRemuxStream(url, start) {
+            console.log('Player: Loading REMUX Stream from', start, '(fast copy, no transcoding)');
+            const targetUrl = url || videoUrl;
+            const startTime = typeof start === 'number' ? start : lastAbsoluteTime;
+            
+            // For remux, use web-compatible audio track if current one isn't compatible
+            let audioTrackToUse = currentAudioTrack;
+            if (sourceMetadata?.audioTracks?.[currentAudioTrack] && !sourceMetadata.audioTracks[currentAudioTrack].webCompatible) {
+                // Current audio track isn't web-compatible, use the first compatible one
+                audioTrackToUse = sourceMetadata.webCompatibleAudioIndex || 0;
+                console.log(`Player: Audio track ${currentAudioTrack} not web-compatible, using track ${audioTrackToUse}`);
+            }
+            
+            const streamUrl = `http://127.0.0.1:6987/api/transcode/remux?url=${encodeURIComponent(targetUrl)}&start=${startTime}&audioTrack=${audioTrackToUse}`;
+            
+            document.getElementById('loading-spinner').style.display = 'block';
+            isTranscoding = true;
+            updateTranscodeUI();
+            
+            video.pause();
+            video.removeAttribute('src');
+            video.load();
+            video.preload = 'auto';
+            video.playsInline = true;
+            video.src = streamUrl;
+            video.load();
+            
+            const attemptPlay = async (attempts = 3) => {
+                for (let i = 0; i < attempts; i++) {
+                    try {
+                        await video.play();
+                        return;
+                    } catch (e) {
+                        if (i < attempts - 1) {
+                            await new Promise(r => setTimeout(r, 500));
+                        } else {
+                            console.warn('Remux play() failed, falling back to transcode:', e);
+                            // If remux fails, fall back to transcoding
+                            useRemux = false;
+                            loadTranscodedStream(url, start);
+                        }
+                    }
+                }
+            };
+            attemptPlay();
         }
 
         function loadTranscodedStream(url, start) {
-            console.log('Player: Loading Transcoded Stream from', start, 'Quality:', currentQuality);
+            console.log('Player: Loading Transcoded Stream from', start, 'Quality:', currentQuality, useSoftwareFallback ? '(SOFTWARE MODE)' : '');
             // Ensure we use the global videoUrl variable if url is just a placeholder
             const targetUrl = url || videoUrl;
             // Ensure start is a valid number
             const startTime = typeof start === 'number' ? start : lastAbsoluteTime;
             
-            const streamUrl = `http://127.0.0.1:6987/api/transcode/stream?url=${encodeURIComponent(targetUrl)}&start=${startTime}&audioTrack=${currentAudioTrack}&quality=${currentQuality}`;
+            // Add forceSoftware parameter if we've hit the fallback threshold
+            const softwareParam = useSoftwareFallback ? '&forceSoftware=true' : '';
+            const streamUrl = `http://127.0.0.1:6987/api/transcode/stream?url=${encodeURIComponent(targetUrl)}&start=${startTime}&audioTrack=${currentAudioTrack}&quality=${currentQuality}${softwareParam}`;
             
             document.getElementById('loading-spinner').style.display = 'block';
             isTranscoding = true;
@@ -629,9 +713,15 @@
                     document.querySelectorAll('#audio-list .list-item').forEach(x => x.classList.remove('active'));
                     el.classList.add('active');
                     
+                    // If switching to non-web-compatible audio, force transcoding
+                    if (useRemux && sourceMetadata?.audioTracks?.[track.id] && !sourceMetadata.audioTracks[track.id].webCompatible) {
+                        console.log('[Player] Selected audio track not web-compatible, switching to transcode mode');
+                        useRemux = false;
+                    }
+                    
                     const currentTime = lastAbsoluteTime; // Use reliable tracked time
                     isTranscoding = true;
-                    loadTranscodedStream(videoUrl, currentTime);
+                    loadSmartStream(videoUrl, currentTime);
                     document.getElementById('audio-menu').classList.remove('visible');
                 };
                 list.appendChild(el);
@@ -706,10 +796,16 @@
             
             settingsMenu.classList.remove('visible');
             
+            // Quality change requires transcoding (remux doesn't support quality change)
+            if (useRemux && q !== 'native') {
+                console.log('[Player] Quality change requested, switching to transcode mode');
+                useRemux = false;
+            }
+            
             const currentTime = lastAbsoluteTime; // Use reliable tracked time
             // Force transcoding switch
             isTranscoding = true;
-            loadTranscodedStream(videoUrl, currentTime);
+            loadSmartStream(videoUrl, currentTime);
         };
 
         // --- Controls ---
@@ -760,6 +856,8 @@
             if (playbackStableTimer) clearTimeout(playbackStableTimer);
             playbackStableTimer = setTimeout(() => {
                 retryCount = 0;
+                // If we were in software fallback and playback is now stable, keep using software
+                // (don't reset useSoftwareFallback - it worked!)
                 console.log('Player: Playback stable, retry count reset');
             }, 10000);
         };
@@ -795,11 +893,54 @@
                 console.warn('Video error occurred, falling back to transcoder');
                 fallbackToTranscoder(videoUrl, lastAbsoluteTime);
             } else {
+                // Check if we were using remux and it failed - fall back to transcoding
+                if (useRemux) {
+                    console.warn('[Player] Remux failed, falling back to transcoding...');
+                    useRemux = false;
+                    retryCount = 0;
+                    
+                    // Update badge with correct encoder type
+                    const badge = document.getElementById('transcode-badge');
+                    if (badge) {
+                        badge.textContent = encoderInfo?.isHardwareAccelerated ? 
+                            (encoderInfo.encoderType.includes('NVIDIA') ? 'NVENC' : 
+                             encoderInfo.encoderType.includes('Intel') ? 'QSV' :
+                             encoderInfo.encoderType.includes('AMD') ? 'AMF' :
+                             encoderInfo.encoderType.includes('Apple') ? 'VT' :
+                             encoderInfo.encoderType.includes('VAAPI') ? 'VAAPI' : 'HW') : 'CPU';
+                        badge.title = encoderInfo?.isHardwareAccelerated ? 
+                            `Hardware Accelerated: ${encoderInfo.encoderType}` : 'Software Encoding';
+                        badge.style.background = ''; // Reset to default
+                    }
+                    
+                    setTimeout(() => {
+                        loadTranscodedStream(videoUrl, lastAbsoluteTime);
+                    }, 500);
+                    return;
+                }
+                
                 // Transcoder stream failed - Retry Logic
                 if (retryCount < MAX_RETRIES) {
                     retryCount++;
                     const resumeTime = lastAbsoluteTime;
-                    console.log(`Transcoder error (code ${err?.code}). Retrying (${retryCount}/${MAX_RETRIES}) from ${resumeTime}s...`);
+                    
+                    // Check if we should switch to software encoding
+                    // This helps users whose hardware encoder detection passes but actual encoding fails
+                    if (!useSoftwareFallback && retryCount >= SOFTWARE_FALLBACK_THRESHOLD && encoderInfo?.isHardwareAccelerated) {
+                        console.warn(`[Player] Hardware encoding failed ${SOFTWARE_FALLBACK_THRESHOLD} times, switching to software fallback...`);
+                        useSoftwareFallback = true;
+                        retryCount = 0; // Reset retry count for software attempts
+                        
+                        // Update UI to show software mode
+                        const badge = document.getElementById('transcode-badge');
+                        if (badge) {
+                            badge.textContent = 'CPU';
+                            badge.title = 'Software Encoding (Fallback)';
+                            badge.style.background = ''; // Reset to default
+                        }
+                    }
+                    
+                    console.log(`Transcoder error (code ${err?.code}). Retrying (${retryCount}/${MAX_RETRIES}) from ${resumeTime}s...${useSoftwareFallback ? ' [SOFTWARE MODE]' : ''}`);
                     
                     // Show spinner
                     document.getElementById('loading-spinner').style.display = 'block';
@@ -882,7 +1023,7 @@
             const currentDuration = (isTranscoding && videoDuration > 0) ? videoDuration : video.duration;
             if (isFinite(currentDuration)) {
                 const newTime = pos * currentDuration;
-                if (isTranscoding) loadTranscodedStream(videoUrl, newTime);
+                if (isTranscoding) loadSmartStream(videoUrl, newTime);
                 else video.currentTime = newTime;
             }
         };
@@ -1156,13 +1297,13 @@
                 const currentDuration = (isTranscoding && videoDuration > 0) ? videoDuration : video.duration;
                 const currentTime = getCurrentRealTime();
                 const newTime = Math.min(currentDuration, currentTime + 10);
-                if (isTranscoding) loadTranscodedStream(videoUrl, newTime);
+                if (isTranscoding) loadSmartStream(videoUrl, newTime);
                 else video.currentTime = newTime;
             }
             if (e.key === 'ArrowLeft') {
                 const currentTime = getCurrentRealTime();
                 const newTime = Math.max(0, currentTime - 10);
-                if (isTranscoding) loadTranscodedStream(videoUrl, newTime);
+                if (isTranscoding) loadSmartStream(videoUrl, newTime);
                 else video.currentTime = newTime;
             }
             if (e.key === 'Escape') {
@@ -1431,6 +1572,9 @@
             activeSub = null;
             overlay.innerHTML = '';
             retryCount = 0;
+            useSoftwareFallback = false; // Reset software fallback for new content
+            useRemux = false; // Will be re-evaluated after metadata fetch
+            sourceMetadata = null;
             lastAbsoluteTime = 0;
             videoDuration = 0; // Reset duration, will be fetched from new file
             
@@ -1455,23 +1599,32 @@
                 debugLog('[NextEp] Fetching metadata for new episode...');
                 const metaRes = await fetch(`http://127.0.0.1:6987/api/transcode/metadata?url=${encodeURIComponent(newStreamUrl)}`);
                 if (metaRes.ok) {
-                    const metadata = await metaRes.json();
-                    if (metadata.duration) {
-                        videoDuration = metadata.duration;
+                    sourceMetadata = await metaRes.json();
+                    if (sourceMetadata.duration) {
+                        videoDuration = sourceMetadata.duration;
                         debugLog('[NextEp] New episode duration: ' + videoDuration);
                     }
-                    if (metadata.audioTracks) {
-                        audioTracks = metadata.audioTracks;
+                    if (sourceMetadata.audioTracks) {
+                        audioTracks = sourceMetadata.audioTracks;
                         currentAudioTrack = 0; // Reset to first audio track
                         renderAudioTracks();
+                    }
+                    // Check if we can use remux for the new episode
+                    if (sourceMetadata.canRemux) {
+                        debugLog('[NextEp] Web-compatible codecs - using REMUX');
+                        useRemux = true;
+                    } else {
+                        debugLog('[NextEp] Incompatible codecs - using transcode');
+                        useRemux = false;
                     }
                 }
             } catch (e) {
                 debugLog('[NextEp] Failed to fetch metadata: ' + e.message, 'error');
+                useRemux = false;
             }
             
-            // Load the new stream using transcoder (since isTranscoding is always true)
-            loadTranscodedStream(newStreamUrl, 0);
+            // Load the new stream using smart loader
+            loadSmartStream(newStreamUrl, 0);
             
             // Fetch new subtitles
             if (tmdbId || imdbId) {
@@ -2078,6 +2231,9 @@
             activeSub = null;
             overlay.innerHTML = '';
             retryCount = 0;
+            useSoftwareFallback = false; // Reset software fallback for new content
+            useRemux = false; // Will be re-evaluated after metadata fetch
+            sourceMetadata = null;
             lastAbsoluteTime = 0;
             videoDuration = 0; // Reset duration
             
@@ -2110,23 +2266,32 @@
                 debugLog('[NextEp] Fetching metadata...');
                 const metaRes = await fetch(`http://127.0.0.1:6987/api/transcode/metadata?url=${encodeURIComponent(newStreamUrl)}`);
                 if (metaRes.ok) {
-                    const metadata = await metaRes.json();
-                    if (metadata.duration) {
-                        videoDuration = metadata.duration;
+                    sourceMetadata = await metaRes.json();
+                    if (sourceMetadata.duration) {
+                        videoDuration = sourceMetadata.duration;
                         debugLog('[NextEp] Duration: ' + videoDuration);
                     }
-                    if (metadata.audioTracks) {
-                        audioTracks = metadata.audioTracks;
+                    if (sourceMetadata.audioTracks) {
+                        audioTracks = sourceMetadata.audioTracks;
                         currentAudioTrack = 0;
                         renderAudioTracks();
+                    }
+                    // Check if we can use remux for the new episode
+                    if (sourceMetadata.canRemux) {
+                        debugLog('[NextEp] Web-compatible codecs - using REMUX');
+                        useRemux = true;
+                    } else {
+                        debugLog('[NextEp] Incompatible codecs - using transcode');
+                        useRemux = false;
                     }
                 }
             } catch (e) {
                 debugLog('[NextEp] Failed to fetch metadata: ' + e.message, 'error');
+                useRemux = false;
             }
             
-            // Load the new stream using transcoder
-            loadTranscodedStream(newStreamUrl, 0);
+            // Load the new stream using smart loader
+            loadSmartStream(newStreamUrl, 0);
             
             // Fetch new subtitles
             if (tid || iid) {
