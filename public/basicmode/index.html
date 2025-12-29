@@ -82,16 +82,21 @@
 
             <div class="flex items-center gap-4 ml-auto">
                 <!-- Search Bar -->
-                <div class="relative group w-full max-w-md">
-                    <input type="text" 
-                           id="search-input"
-                           class="block w-64 md:w-80 lg:w-96 pl-12 pr-4 py-2.5 bg-gray-800/60 border border-gray-700/50 rounded-full text-sm placeholder-gray-500 text-white focus:outline-none focus:border-purple-500/50 focus:ring-2 focus:ring-purple-500/10 transition-all duration-300 backdrop-blur-md hover:bg-gray-800/70 shadow-inner" 
-                           placeholder="Search movies, TV shows...">
-                    
-                    <div class="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
-                        <svg class="h-5 w-5 text-gray-300 group-focus-within:text-purple-400 transition-colors" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                        </svg>
+                <div class="relative group w-full max-w-md flex items-center gap-2">
+                    <select id="search-source-select" class="bg-gray-800/60 border border-gray-700/50 rounded-full text-sm text-white px-4 py-2.5 focus:outline-none focus:border-purple-500/50 focus:ring-2 focus:ring-purple-500/10 transition-all duration-300 backdrop-blur-md hover:bg-gray-800/70 shadow-inner appearance-none cursor-pointer max-w-[120px] truncate">
+                        <option value="tmdb">TMDB</option>
+                    </select>
+                    <div class="relative flex-1">
+                        <input type="text" 
+                               id="search-input"
+                               class="block w-full pl-10 pr-4 py-2.5 bg-gray-800/60 border border-gray-700/50 rounded-full text-sm placeholder-gray-500 text-white focus:outline-none focus:border-purple-500/50 focus:ring-2 focus:ring-purple-500/10 transition-all duration-300 backdrop-blur-md hover:bg-gray-800/70 shadow-inner" 
+                               placeholder="Search movies, TV shows...">
+                        
+                        <div class="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none">
+                            <svg class="h-5 w-5 text-gray-300 group-focus-within:text-purple-400 transition-colors" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                            </svg>
+                        </div>
                     </div>
                 </div>
 
@@ -111,96 +116,103 @@
     </header>
 
     <!-- Settings Modal -->
-    <div id="settings-modal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm hidden opacity-0 transition-opacity duration-300">
-        <div class="bg-gray-900 border border-gray-800 rounded-2xl w-full max-w-md p-6 shadow-2xl transform scale-95 transition-transform duration-300" id="settings-content">
-            <h2 class="text-2xl font-bold text-white mb-6 flex items-center gap-2">
-                <svg class="w-6 h-6 text-primary-purple" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                </svg>
-                Settings
-            </h2>
+    <div id="settings-modal" class="fixed inset-0 z-[500] flex items-center justify-center bg-black/80 backdrop-blur-sm hidden opacity-0 transition-opacity duration-300 p-4">
+        <div class="bg-gray-900 border border-gray-800 rounded-2xl w-full max-w-md max-h-[90vh] overflow-hidden flex flex-col shadow-2xl transform scale-95 transition-transform duration-300" id="settings-content">
+            <!-- Header - Fixed -->
+            <div class="p-4 sm:p-6 border-b border-gray-800 flex-shrink-0">
+                <h2 class="text-xl sm:text-2xl font-bold text-white flex items-center gap-2">
+                    <svg class="w-5 h-5 sm:w-6 sm:h-6 text-primary-purple" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                    </svg>
+                    Settings
+                </h2>
+            </div>
             
-            <div class="mb-6">
-                <label class="block text-gray-400 text-sm font-medium mb-2">Jackett API Key</label>
-                <input type="password" id="jackett-api-input" class="w-full bg-black/50 border border-gray-700 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-primary-purple focus:ring-1 focus:ring-primary-purple transition-all" placeholder="Enter your Jackett API key">
-                <p class="text-gray-500 text-xs mt-2">Required for fetching sources via Jackett.</p>
-            </div>
-
-            <div class="mb-6">
-                <label class="block text-gray-400 text-sm font-medium mb-2">Jackett Base URL</label>
-                <input type="text" id="jackett-url-input" class="w-full bg-black/50 border border-gray-700 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-primary-purple focus:ring-1 focus:ring-primary-purple transition-all" placeholder="http://127.0.0.1:9117/api/v2.0/indexers/all/results/torznab">
-                <p class="text-gray-500 text-xs mt-2">Default: http://127.0.0.1:9117/api/v2.0/indexers/all/results/torznab</p>
-            </div>
-
-            <div class="mb-6">
-                <label class="block text-gray-400 text-sm font-medium mb-2">Stremio Addons</label>
-                <div class="flex gap-2 mb-3">
-                    <input type="text" id="addon-manifest-input" class="flex-1 bg-black/50 border border-gray-700 rounded-lg px-4 py-2 text-sm text-white focus:outline-none focus:border-primary-purple transition-all" placeholder="https://addon.com/manifest.json">
-                    <button id="install-addon-btn" class="px-4 py-2 bg-purple-600 hover:bg-purple-500 text-white text-xs font-bold rounded-lg transition-colors">Install</button>
-                </div>
-                <div id="installed-addons-list" class="space-y-2 max-h-40 overflow-y-auto custom-scrollbar pr-1">
-                    <!-- Addons go here -->
-                </div>
-            </div>
-
-            <!-- Debrid Configuration -->
-            <div class="mb-6 pt-4 border-t border-gray-800">
-                <h3 class="text-white font-semibold mb-3 flex items-center gap-2">
-                    <svg class="w-5 h-5 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
-                    </svg>
-                    Debrid Settings
-                </h3>
-                
-                <div class="mb-4">
-                    <label class="flex items-center gap-2 cursor-pointer">
-                        <input type="checkbox" id="use-debrid-toggle" class="form-checkbox bg-gray-800 border-gray-700 text-purple-600 rounded focus:ring-purple-500 transition-colors">
-                        <span class="text-gray-300 text-sm">Use Debrid for streams</span>
-                    </label>
+            <!-- Scrollable Content -->
+            <div class="flex-1 overflow-y-auto p-4 sm:p-6 space-y-5 custom-scrollbar">
+                <div>
+                    <label class="block text-gray-400 text-xs sm:text-sm font-medium mb-2">Jackett API Key</label>
+                    <input type="password" id="jackett-api-input" class="w-full bg-black/50 border border-gray-700 rounded-lg px-3 sm:px-4 py-2.5 sm:py-3 text-sm sm:text-base text-white focus:outline-none focus:border-primary-purple focus:ring-1 focus:ring-primary-purple transition-all" placeholder="Enter your Jackett API key">
+                    <p class="text-gray-500 text-[10px] sm:text-xs mt-1.5">Required for fetching sources via Jackett.</p>
                 </div>
 
-                <div id="debrid-config-container" class="space-y-4 opacity-50 pointer-events-none transition-opacity duration-300">
-                    <div>
-                        <label class="block text-gray-400 text-xs font-medium mb-1">Provider</label>
-                        <select id="debrid-provider-select" class="w-full bg-black/50 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-primary-purple transition-all">
-                            <option value="realdebrid">Real-Debrid</option>
-                            <option value="alldebrid">AllDebrid</option>
-                            <option value="torbox">TorBox</option>
-                            <option value="premiumize">Premiumize</option>
-                        </select>
+                <div>
+                    <label class="block text-gray-400 text-xs sm:text-sm font-medium mb-2">Jackett Base URL</label>
+                    <input type="text" id="jackett-url-input" class="w-full bg-black/50 border border-gray-700 rounded-lg px-3 sm:px-4 py-2.5 sm:py-3 text-sm sm:text-base text-white focus:outline-none focus:border-primary-purple focus:ring-1 focus:ring-primary-purple transition-all" placeholder="http://127.0.0.1:9117/...">
+                    <p class="text-gray-500 text-[10px] sm:text-xs mt-1.5 break-all">Default: http://127.0.0.1:9117/api/v2.0/indexers/all/results/torznab</p>
+                </div>
+
+                <div>
+                    <label class="block text-gray-400 text-xs sm:text-sm font-medium mb-2">Stremio Addons</label>
+                    <div class="flex gap-2 mb-3">
+                        <input type="text" id="addon-manifest-input" class="flex-1 min-w-0 bg-black/50 border border-gray-700 rounded-lg px-3 py-2 text-xs sm:text-sm text-white focus:outline-none focus:border-primary-purple transition-all" placeholder="https://addon.com/manifest.json">
+                        <button id="install-addon-btn" class="px-3 sm:px-4 py-2 bg-purple-600 hover:bg-purple-500 text-white text-xs font-bold rounded-lg transition-colors flex-shrink-0">Install</button>
+                    </div>
+                    <div id="installed-addons-list" class="space-y-2 max-h-32 sm:max-h-40 overflow-y-auto custom-scrollbar pr-1">
+                        <!-- Addons go here -->
+                    </div>
+                </div>
+
+                <!-- Debrid Configuration -->
+                <div class="pt-4 border-t border-gray-800">
+                    <h3 class="text-white font-semibold mb-3 flex items-center gap-2 text-sm sm:text-base">
+                        <svg class="w-4 h-4 sm:w-5 sm:h-5 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+                        </svg>
+                        Debrid Settings
+                    </h3>
+                    
+                    <div class="mb-4">
+                        <label class="flex items-center gap-2 cursor-pointer">
+                            <input type="checkbox" id="use-debrid-toggle" class="form-checkbox bg-gray-800 border-gray-700 text-purple-600 rounded focus:ring-purple-500 transition-colors">
+                            <span class="text-gray-300 text-xs sm:text-sm">Use Debrid for streams</span>
+                        </label>
                     </div>
 
-                    <div id="rd-auth-section">
-                        <div class="flex items-center justify-between mb-2">
-                            <span id="rd-status" class="text-xs text-red-400">Not logged in</span>
-                            <button id="rd-login-btn" class="px-3 py-1.5 bg-green-600 hover:bg-green-500 text-white text-xs font-bold rounded transition-colors">
-                                Login with Real-Debrid
-                            </button>
+                    <div id="debrid-config-container" class="space-y-3 sm:space-y-4 opacity-50 pointer-events-none transition-opacity duration-300">
+                        <div>
+                            <label class="block text-gray-400 text-[10px] sm:text-xs font-medium mb-1">Provider</label>
+                            <select id="debrid-provider-select" class="w-full bg-black/50 border border-gray-700 rounded-lg px-3 py-2 text-xs sm:text-sm text-white focus:outline-none focus:border-primary-purple transition-all">
+                                <option value="realdebrid">Real-Debrid</option>
+                                <option value="alldebrid">AllDebrid</option>
+                                <option value="torbox">TorBox</option>
+                                <option value="premiumize">Premiumize</option>
+                            </select>
                         </div>
-                        <p class="text-gray-500 text-[10px]">No password needed. Authenticate via device code.</p>
-                    </div>
 
-                    <div id="api-key-section" class="hidden">
-                        <label class="block text-gray-400 text-xs font-medium mb-1">API Key</label>
-                        <input type="password" id="debrid-api-input" class="w-full bg-black/50 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-primary-purple transition-all" placeholder="Enter API Key">
+                        <div id="rd-auth-section">
+                            <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-2">
+                                <span id="rd-status" class="text-[10px] sm:text-xs text-red-400">Not logged in</span>
+                                <button id="rd-login-btn" class="px-3 py-1.5 bg-green-600 hover:bg-green-500 text-white text-[10px] sm:text-xs font-bold rounded transition-colors w-full sm:w-auto">
+                                    Login with Real-Debrid
+                                </button>
+                            </div>
+                            <p class="text-gray-500 text-[9px] sm:text-[10px]">No password needed. Authenticate via device code.</p>
+                        </div>
+
+                        <div id="api-key-section" class="hidden">
+                            <label class="block text-gray-400 text-[10px] sm:text-xs font-medium mb-1">API Key</label>
+                            <input type="password" id="debrid-api-input" class="w-full bg-black/50 border border-gray-700 rounded-lg px-3 py-2 text-xs sm:text-sm text-white focus:outline-none focus:border-primary-purple transition-all" placeholder="Enter API Key">
+                        </div>
                     </div>
+                </div>
+
+                <div class="pt-4 border-t border-gray-800">
+                    <label class="block text-gray-400 text-xs sm:text-sm font-medium mb-2">Application Mode</label>
+                    <button onclick="if(window.electronAPI?.setPreferredMode) window.electronAPI.setPreferredMode('advanced'); window.location.href='../index.html'" class="w-full py-2 bg-gray-800 hover:bg-gray-700 text-white text-xs sm:text-sm rounded-lg transition-colors flex items-center justify-center gap-2 border border-gray-700">
+                        <svg class="w-4 h-4 sm:w-5 sm:h-5 text-primary-purple" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
+                        </svg>
+                        Switch to Advanced Mode
+                    </button>
                 </div>
             </div>
 
-            <div class="mb-6 pt-4 border-t border-gray-800">
-                <label class="block text-gray-400 text-sm font-medium mb-2">Application Mode</label>
-                <button onclick="if(window.electronAPI?.setPreferredMode) window.electronAPI.setPreferredMode('advanced'); window.location.href='../index.html'" class="w-full py-2 bg-gray-800 hover:bg-gray-700 text-white rounded-lg transition-colors flex items-center justify-center gap-2 border border-gray-700">
-                    <svg class="w-5 h-5 text-primary-purple" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
-                    </svg>
-                    Switch to Advanced Mode (Main App)
-                </button>
-            </div>
-
-            <div class="flex justify-end gap-3">
-                <button id="close-settings" class="px-4 py-2 rounded-lg text-gray-300 hover:text-white hover:bg-gray-800 transition-colors">Cancel</button>
-                <button id="save-settings" class="px-6 py-2 rounded-lg bg-primary-purple text-white font-medium hover:bg-purple-600 shadow-lg shadow-purple-500/25 transition-all">Save Changes</button>
+            <!-- Footer - Fixed -->
+            <div class="p-4 sm:p-6 border-t border-gray-800 flex-shrink-0 flex justify-end gap-2 sm:gap-3">
+                <button id="close-settings" class="px-3 sm:px-4 py-2 rounded-lg text-gray-300 hover:text-white hover:bg-gray-800 transition-colors text-sm">Cancel</button>
+                <button id="save-settings" class="px-4 sm:px-6 py-2 rounded-lg bg-primary-purple text-white font-medium hover:bg-purple-600 shadow-lg shadow-purple-500/25 transition-all text-sm">Save</button>
             </div>
         </div>
     </div>
@@ -272,9 +284,27 @@
     <nav id="main-nav" class="fixed top-12 left-0 right-0 z-[101] flex justify-center py-4 pointer-events-none">
         <div class="bg-black/50 backdrop-blur-md border border-white/10 rounded-full px-6 py-2 pointer-events-auto flex items-center gap-6">
             <a href="#" onclick="showSection('home'); return false;" class="nav-link text-white/70 hover:text-white transition-colors text-sm font-medium active">Home</a>
+            <a href="#" onclick="showSection('genres'); return false;" class="nav-link text-white/70 hover:text-white transition-colors text-sm font-medium">Genres</a>
+            <a href="#" onclick="showSection('catalogs'); return false;" class="nav-link text-white/70 hover:text-white transition-colors text-sm font-medium">Catalogs</a>
             <a href="#" onclick="showSection('comics'); return false;" class="nav-link text-white/70 hover:text-white transition-colors text-sm font-medium">Comics</a>
         </div>
     </nav>
+
+    <!-- Genres Section -->
+    <div id="genres-section" class="hidden relative z-[70] px-6 min-h-screen pt-32 pointer-events-auto flex flex-col items-center">
+        <h2 class="text-3xl font-bold text-white mb-8">Browse by Genre</h2>
+        <div id="genres-list" class="flex flex-wrap justify-center gap-4 max-w-4xl">
+            <!-- Genre buttons injected here -->
+        </div>
+    </div>
+
+    <!-- Catalogs Section -->
+    <div id="catalogs-section" class="hidden relative z-[70] px-6 min-h-screen pt-32 pointer-events-auto flex flex-col items-center">
+        <h2 class="text-3xl font-bold text-white mb-8">Browse Addon Catalogs</h2>
+        <div id="catalogs-list" class="flex flex-wrap justify-center gap-4 max-w-4xl">
+            <!-- Catalog buttons injected here -->
+        </div>
+    </div>
 
     <!-- Comics Section -->
     <div id="comics-section" class="hidden relative z-[70] px-6 min-h-screen pt-32 pointer-events-auto">

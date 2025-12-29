@@ -3,6 +3,7 @@ export const IMAGE_BASE_URL = 'https://image.tmdb.org/t/p';
 
 export const getImageUrl = (path, size = 'w500') => {
   if (!path) return 'https://via.placeholder.com/500x750/1a1a2e/ffffff?text=No+Image';
+  if (path.startsWith('http://') || path.startsWith('https://')) return path;
   return `${IMAGE_BASE_URL}/${size}${path}`;
 };
 
@@ -49,3 +50,30 @@ export const getSeasonEpisodes = (tvId, seasonNumber) =>
 
 export const searchMulti = (query) => 
   fetchFromTMDB('/search/multi', { query, include_adult: false });
+
+export const getDiscover = (type, params = {}) => 
+  fetchFromTMDB(`/discover/${type}`, { include_adult: false, sort_by: 'popularity.desc', ...params });
+
+export const getPersonDetails = (id) => 
+  fetchFromTMDB(`/person/${id}`);
+
+export const getPersonCredits = (id) => 
+  fetchFromTMDB(`/person/${id}/combined_credits`);
+
+export const getGenresList = async () => {
+  const [movieGenres, tvGenres] = await Promise.all([
+    fetchFromTMDB('/genre/movie/list'),
+    fetchFromTMDB('/genre/tv/list')
+  ]);
+  
+  // Merge and dedup by ID
+  const map = new Map();
+  movieGenres.genres.forEach(g => map.set(g.id, g));
+  tvGenres.genres.forEach(g => map.set(g.id, g));
+  
+  return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
+};
+
+// Find TMDB ID from external ID (like IMDB)
+export const findByExternalId = (externalId, externalSource = 'imdb_id') => 
+  fetchFromTMDB(`/find/${externalId}`, { external_source: externalSource });

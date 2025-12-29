@@ -118,7 +118,8 @@ let mainWindow;
 // Updater runtime state/timers so we can disable cleanly at runtime
 let updaterActive = false;
 let updaterTimers = { initial: null, retry: null };
-
+// Flag to skip torrent cleanup during same-torrent episode transitions
+let skipTorrentCleanupHash = null;
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -311,57 +312,51 @@ function setupAutoUpdater() {
         });
 
         autoUpdater.on('update-available', (info) => {
-            const releasesUrl = 'https://github.com/ayman708-UX/PlayTorrio/releases/latest';
-            console.log('[Updater] Update available. New version:', info?.version || 'unknown', 'Current:', app.getVersion());
-            // Guard: Only proceed if remote version is greater than current
-            if (compareVersions(info?.version, app.getVersion()) <= 0) {
-                console.log('[Updater] Remote version is not greater than current; skipping download');
-                return;
-            }
+            const version = info?.version || 'unknown';
+            console.log('[Updater] Update available:', version, 'Current:', app.getVersion());
+
+            // Determine URL based on platform/arch
+            let downloadUrl = 'https://github.com/ayman708-UX/PlayTorrio/releases/latest';
             
+            if (process.platform === 'win32') {
+                downloadUrl = 'https://github.com/ayman708-UX/PlayTorrio/releases/latest/download/PlayTorrio-installer.exe';
+            } else if (process.platform === 'linux') {
+                // Default to AppImage
+                 downloadUrl = 'https://github.com/ayman708-UX/PlayTorrio/releases/latest/download/PlayTorrio.AppImage';
+            } else if (process.platform === 'darwin') {
+                if (process.arch === 'arm64') {
+                     downloadUrl = 'https://github.com/ayman708-UX/PlayTorrio/releases/latest/download/PlayTorrio-mac-arm64.dmg';
+                } else {
+                     downloadUrl = 'https://github.com/ayman708-UX/PlayTorrio/releases/latest/download/PlayTorrio-mac-x64.dmg';
+                }
+            }
+
+            // Notify windows (Manual update flow)
+            try {
+                if (mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents) {
+                     mainWindow.webContents.send('update-available', { 
+                        version, 
+                        manual: true, 
+                        downloadUrl 
+                    });
+                }
+            } catch (_) {}
+            
+            // Show native notification on macOS
             if (process.platform === 'darwin') {
-                // macOS: Show native notification AND send to renderer
                 const { Notification } = require('electron');
                 if (Notification.isSupported()) {
                     const notification = new Notification({
                         title: 'PlayTorrio Update Available',
-                        body: `Version ${info?.version || 'newer'} is available. Please download the new DMG.`,
+                        body: `Version ${version} is available. Click to download.`,
                         silent: false
                     });
                     notification.on('click', () => {
-                        shell.openExternal(releasesUrl);
+                        shell.openExternal(downloadUrl);
                     });
                     notification.show();
                 }
-                
-                // Also send to renderer so user sees it in the app
-                try {
-                    if (mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents) {
-                        mainWindow.webContents.send('update-available', { 
-                            version: info?.version,
-                            manual: true,
-                            platform: 'darwin',
-                            downloadUrl: releasesUrl
-                        });
-                    }
-                } catch(_) {}
-                
-                console.log('[Updater] macOS: User notified. Manual download required.');
-                return; // Don't auto-download on macOS
             }
-            
-            // Windows/Linux: Send to renderer to show progress bar, then start download
-            try {
-                if (mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents) {
-                    mainWindow.webContents.send('update-available', { version: info?.version });
-                }
-            } catch(_) {}
-            
-            // Windows/Linux: start download programmatically
-            try {
-                console.log('[Updater] Starting update download...');
-                autoUpdater.downloadUpdate().catch(e=>console.error('[Updater] downloadUpdate failed:', e?.message||e));
-            } catch(_) {}
         });
 
         autoUpdater.on('update-not-available', (info) => {
@@ -1104,13 +1099,20 @@ function openInHtml5Player(win, streamUrl, startSeconds, metadata = {}) {
             mainWindow.removeListener('resize', syncToPlayer);
             
             // Cleanup WebTorrent ONLY if it was a local stream AND in Basic Mode
+            // BUT skip cleanup if we're doing a same-torrent episode transition
             if (metadata.isBasicMode && streamUrl && streamUrl.includes('/api/stream-file')) {
                 try {
                     const urlObj = new URL(streamUrl);
                     const hash = urlObj.searchParams.get('hash');
                     if (hash) {
-                        console.log(`[Cleanup] Basic Mode player closed, stopping local stream: ${hash}`);
-                        fetch(`http://localhost:6987/api/stop-stream?hash=${hash}`).catch(() => {});
+                        // Check if we should skip cleanup (same torrent transition)
+                        if (skipTorrentCleanupHash === hash || skipTorrentCleanupHash === 'pending') {
+                            console.log(`[Cleanup] Skipping cleanup for ${hash} (same torrent episode transition)`);
+                            skipTorrentCleanupHash = null; // Reset the flag
+                        } else {
+                            console.log(`[Cleanup] Basic Mode player closed, stopping local stream: ${hash}`);
+                            fetch(`http://localhost:6987/api/stop-stream?hash=${hash}`).catch(() => {});
+                        }
                     }
                 } catch (e) {
                     console.error('[Cleanup] Failed to parse streamUrl for cleanup:', e.message);
@@ -1130,6 +1132,10 @@ function openInHtml5Player(win, streamUrl, startSeconds, metadata = {}) {
         if (metadata.type) params.append('type', metadata.type);
         if (metadata.isDebrid) params.append('isDebrid', '1');
         if (metadata.isBasicMode) params.append('isBasicMode', '1');
+        if (metadata.showName) params.append('showName', metadata.showName);
+        if (metadata.provider) params.append('provider', metadata.provider);
+        if (metadata.providerUrl) params.append('providerUrl', metadata.providerUrl);
+        if (metadata.quality) params.append('quality', metadata.quality);
 
         const playerUrl = `http://localhost:6987/player.html?${params.toString()}`;
         console.log('[HTML5] Loading:', playerUrl);
@@ -1139,6 +1145,13 @@ function openInHtml5Player(win, streamUrl, startSeconds, metadata = {}) {
         playerWindow.once('ready-to-show', () => {
             playerWindow.show();
             playerWindow.focus();
+        });
+        
+        // Enable DevTools with F12 or Ctrl+Shift+I
+        playerWindow.webContents.on('before-input-event', (event, input) => {
+            if (input.key === 'F12' || (input.control && input.shift && input.key === 'I')) {
+                playerWindow.webContents.toggleDevTools();
+            }
         });
 
         // Handle Escape to exit fullscreen/close via IPC from renderer
@@ -2597,17 +2610,41 @@ ipcMain.handle("addonRemove", async (event, addonId) => {
         }
     });
 
+    // IPC handler to set skip cleanup flag
+    ipcMain.handle('set-skip-torrent-cleanup', (event, skip) => {
+        if (skip === true) {
+            // Will be set to actual hash by the cleanup check
+            skipTorrentCleanupHash = 'pending';
+        } else if (typeof skip === 'string') {
+            skipTorrentCleanupHash = skip;
+        } else {
+            skipTorrentCleanupHash = null;
+        }
+        console.log('[Cleanup] Skip torrent cleanup flag set to:', skipTorrentCleanupHash);
+        return { success: true };
+    });
+
     // IPC handler to spawn player (formerly mpv.js, now HTML5)
-ipcMain.handle('spawn-mpvjs-player', async (event, { url, tmdbId, imdbId, seasonNum, episodeNum, subtitles, isDebrid, type, isBasicMode }) => {
+ipcMain.handle('spawn-mpvjs-player', async (event, { url, tmdbId, imdbId, seasonNum, episodeNum, subtitles, isDebrid, type, isBasicMode, showName, provider, providerUrl, quality }) => {
     // return openPlayer(url, { tmdbId, seasonNum, episodeNum, subtitles, isDebrid }); // Old player
     
     let finalImdbId = imdbId;
-    // Auto-fetch IMDB ID if missing
-    if (!finalImdbId && tmdbId) {
+    let finalTmdbId = tmdbId;
+    
+    // Check if tmdbId is actually an IMDB ID (starts with 'tt')
+    if (tmdbId && typeof tmdbId === 'string' && tmdbId.startsWith('tt')) {
+        // tmdbId is actually an IMDB ID, swap them
+        finalImdbId = finalImdbId || tmdbId;
+        finalTmdbId = null; // We don't have the real TMDB ID
+        console.log('[Main] tmdbId was actually IMDB ID:', tmdbId);
+    }
+    
+    // Auto-fetch IMDB ID if missing and we have a real TMDB ID
+    if (!finalImdbId && finalTmdbId) {
         try {
             const useType = (seasonNum || type === 'tv') ? 'tv' : 'movie';
             const apiKey = 'b3556f3b206e16f82df4d1f6fd4545e6'; 
-            const tmdbUrl = `https://api.themoviedb.org/3/${useType}/${tmdbId}/external_ids?api_key=${apiKey}`;
+            const tmdbUrl = `https://api.themoviedb.org/3/${useType}/${finalTmdbId}/external_ids?api_key=${apiKey}`;
             
             const response = await fetch(tmdbUrl);
             if (response.ok) {
@@ -2622,7 +2659,7 @@ ipcMain.handle('spawn-mpvjs-player', async (event, { url, tmdbId, imdbId, season
         }
     }
 
-    return openInHtml5Player(mainWindow, url, null, { tmdbId, imdbId: finalImdbId, seasonNum, episodeNum, isDebrid, type: (seasonNum || type === 'tv' ? 'tv' : 'movie'), isBasicMode });
+    return openInHtml5Player(mainWindow, url, null, { tmdbId: finalTmdbId, imdbId: finalImdbId, seasonNum, episodeNum, isDebrid, type: (seasonNum || type === 'tv' ? 'tv' : 'movie'), isBasicMode, showName, provider, providerUrl, quality });
 });
 
     // Direct MPV launch for external URLs (111477, etc.)

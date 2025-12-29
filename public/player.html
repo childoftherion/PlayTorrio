@@ -186,6 +186,94 @@
             border-radius: 5px; font-weight: 900; margin-left: 12px;
             vertical-align: middle; display: none; box-shadow: 0 0 10px var(--primary-purple);
         }
+
+        /* Next Episode Button */
+        #next-episode-btn {
+            position: absolute;
+            bottom: 180px;
+            right: 40px;
+            background: linear-gradient(135deg, var(--primary-purple), var(--dark-purple));
+            color: white;
+            border: none;
+            padding: 16px 28px;
+            border-radius: 16px;
+            font-size: 16px;
+            font-weight: 700;
+            cursor: pointer;
+            display: none;
+            align-items: center;
+            gap: 12px;
+            z-index: 115;
+            box-shadow: 0 8px 32px rgba(157, 78, 221, 0.5);
+            transition: all 0.3s ease;
+            animation: nextEpPulse 2s ease-in-out infinite;
+        }
+        #next-episode-btn:hover {
+            transform: scale(1.05);
+            box-shadow: 0 12px 40px rgba(157, 78, 221, 0.7);
+        }
+        #next-episode-btn:disabled {
+            opacity: 0.7;
+            cursor: not-allowed;
+            animation: none;
+        }
+        #next-episode-btn .material-icons {
+            font-size: 24px;
+        }
+        #next-episode-btn .next-ep-text {
+            display: flex;
+            flex-direction: column;
+            align-items: flex-start;
+        }
+        #next-episode-btn .next-ep-label {
+            font-size: 11px;
+            opacity: 0.8;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        #next-episode-btn .next-ep-title {
+            font-size: 15px;
+        }
+        @keyframes nextEpPulse {
+            0%, 100% { box-shadow: 0 8px 32px rgba(157, 78, 221, 0.5); }
+            50% { box-shadow: 0 8px 40px rgba(157, 78, 221, 0.8); }
+        }
+        #next-episode-btn.loading .material-icons {
+            animation: spin 1s linear infinite;
+        }
+        
+        /* Debug Overlay */
+        #debug-overlay {
+            position: absolute;
+            top: 80px;
+            left: 20px;
+            right: 20px;
+            max-height: 60%;
+            overflow-y: auto;
+            background: rgba(0, 0, 0, 0.9);
+            color: #0f0;
+            font-family: monospace;
+            font-size: 12px;
+            padding: 15px;
+            border-radius: 10px;
+            border: 1px solid #333;
+            z-index: 200;
+            display: none;
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+        #debug-overlay.visible {
+            display: block;
+        }
+        #debug-overlay .error {
+            color: #f55;
+        }
+        #debug-overlay .warn {
+            color: #fa0;
+        }
+        #debug-overlay .info {
+            color: #0af;
+        }
     </style>
 </head>
 <body>
@@ -200,6 +288,18 @@
         
         <div id="subtitle-overlay"></div>
         <div id="loading-spinner" class="spinner"></div>
+        
+        <!-- Debug Overlay (Press D to toggle) -->
+        <div id="debug-overlay"></div>
+
+        <!-- Next Episode Button (Basic Mode TV Shows Only) -->
+        <button id="next-episode-btn" title="Play Next Episode">
+            <i class="material-icons">skip_next</i>
+            <div class="next-ep-text">
+                <span class="next-ep-label">Up Next</span>
+                <span class="next-ep-title">Next Episode</span>
+            </div>
+        </button>
 
         <div id="controls-overlay">
             <div class="bottom-bar">
@@ -269,10 +369,10 @@
                 <button class="icon-btn" id="close-settings" style="padding:4px;"><i class="material-icons">close</i></button>
             </div>
             <div id="settings-list" class="scrollable-list">
-                <div class="list-item" data-quality="native" onclick="changeQuality('native', this)">Native (Source) - Original Quality</div>
-                <div class="list-item" data-quality="high" onclick="changeQuality('high', this)">High (1080p) - Best Quality</div>
-                <div class="list-item active" data-quality="mid" onclick="changeQuality('mid', this)">Medium (720p) - Balanced</div>
-                <div class="list-item" data-quality="low" onclick="changeQuality('low', this)">Low (480p) - Fast</div>
+                <div class="list-item" data-quality="native" onclick="changeQuality('native', this)">🎬 Native - Original Quality (No Scaling)</div>
+                <div class="list-item" data-quality="high" onclick="changeQuality('high', this)">🔥 1080p - Full HD (Best Quality)</div>
+                <div class="list-item active" data-quality="mid" onclick="changeQuality('mid', this)">⚡ 720p - HD (Balanced)</div>
+                <div class="list-item" data-quality="low" onclick="changeQuality('low', this)">💨 480p - SD (Fastest)</div>
             </div>
         </div>
 
@@ -310,7 +410,48 @@
         const container = document.getElementById('player-container');
         const params = new URLSearchParams(window.location.search);
         
-        const videoUrl = params.get('url');
+        // Debug overlay functionality
+        const debugOverlay = document.getElementById('debug-overlay');
+        let debugLogs = [];
+        let debugVisible = false;
+        
+        function debugLog(msg, type = 'info') {
+            const timestamp = new Date().toLocaleTimeString();
+            const entry = `[${timestamp}] ${msg}`;
+            debugLogs.push({ text: entry, type });
+            if (debugLogs.length > 100) debugLogs.shift(); // Keep last 100 entries
+            updateDebugOverlay();
+            // Also log to console
+            if (type === 'error') console.error(msg);
+            else if (type === 'warn') console.warn(msg);
+            else console.log(msg);
+        }
+        
+        function updateDebugOverlay() {
+            if (!debugVisible) return;
+            debugOverlay.innerHTML = debugLogs.map(l => 
+                `<div class="${l.type}">${l.text}</div>`
+            ).join('');
+            debugOverlay.scrollTop = debugOverlay.scrollHeight;
+        }
+        
+        function toggleDebug() {
+            debugVisible = !debugVisible;
+            debugOverlay.classList.toggle('visible', debugVisible);
+            if (debugVisible) updateDebugOverlay();
+        }
+        
+        // Press 'D' to toggle debug overlay
+        window.addEventListener('keydown', (e) => {
+            if (e.key === 'd' || e.key === 'D') {
+                if (!e.ctrlKey && !e.altKey && !e.metaKey) {
+                    toggleDebug();
+                }
+            }
+        });
+        
+        // These need to be let so we can update them when switching episodes
+        let videoUrl = params.get('url');
         const initialTime = parseFloat(params.get('t') || 0);
         const tmdbId = params.get('tmdbId');
         const imdbId = params.get('imdbId');
@@ -319,9 +460,18 @@
         const type = params.get('type');
         const isDebrid = params.get('isDebrid') === '1';
         const isBasicMode = params.get('isBasicMode') === '1';
+        const showName = params.get('showName') || '';
+        const provider = params.get('provider') || '';  // 'jackett' or addon ID
+        const providerUrl = params.get('providerUrl') || '';  // addon base URL
+        const quality = params.get('quality') || '1080p';
 
         const titleEl = document.getElementById('video-title');
-        titleEl.textContent = (season && episode) ? `S${season}:E${episode}` : (type === 'movie' ? 'Movie' : 'Video');
+        // Display show name with episode info, or just episode info
+        if (season && episode) {
+            titleEl.textContent = showName ? `${showName} - S${season}:E${episode}` : `S${season}:E${episode}`;
+        } else {
+            titleEl.textContent = showName || (type === 'movie' ? 'Movie' : 'Video');
+        }
 
         // State
         let isTranscoding = false; 
@@ -358,6 +508,7 @@
         const MAX_RETRIES = 10;
         let lastAbsoluteTime = 0;
         let playbackStableTimer = null;
+        let encoderInfo = null;
 
         // --- Initialization ---
         if (videoUrl) {
@@ -367,6 +518,23 @@
         if (tmdbId || imdbId) {
             initSubtitles(tmdbId, imdbId, season, episode, type);
         }
+        
+        // Fetch encoder status for display
+        fetch('/api/transcode/status')
+            .then(r => r.json())
+            .then(data => {
+                encoderInfo = data;
+                console.log(`[Player] Encoder: ${data.encoderType} (${data.encoder})`);
+                // Update transcode badge with encoder info
+                const badge = document.getElementById('transcode-badge');
+                if (badge && data.isHardwareAccelerated) {
+                    badge.textContent = data.encoderType.includes('NVIDIA') ? 'NVENC' : 
+                                       data.encoderType.includes('Intel') ? 'QSV' :
+                                       data.encoderType.includes('AMD') ? 'AMF' : 'HW';
+                    badge.title = `Hardware Accelerated: ${data.encoderType}`;
+                }
+            })
+            .catch(() => {});
 
         async function initPlayer(url, start) {
             document.getElementById('loading-spinner').style.display = 'block';
@@ -414,11 +582,35 @@
             isTranscoding = true;
             updateTranscodeUI();
             
+            // Abort any existing load
+            video.pause();
+            video.removeAttribute('src');
+            video.load();
+            
+            // Set optimized video element properties for streaming
+            video.preload = 'auto';
+            video.playsInline = true;
+            
+            // Set new source and play
             video.src = streamUrl;
             video.load();
-            video.play().catch(e => {
-                console.warn('Transcoder play() promise rejected:', e);
-            });
+            
+            // Use play with retry logic
+            const attemptPlay = async (attempts = 3) => {
+                for (let i = 0; i < attempts; i++) {
+                    try {
+                        await video.play();
+                        return;
+                    } catch (e) {
+                        if (i < attempts - 1) {
+                            await new Promise(r => setTimeout(r, 500));
+                        } else {
+                            console.warn('Transcoder play() failed after retries:', e);
+                        }
+                    }
+                }
+            };
+            attemptPlay();
         }
 
         // --- Audio Tracks ---
@@ -535,14 +727,49 @@
         video.onpause = () => { playIcon.textContent = 'play_arrow'; };
         video.onwaiting = () => { document.getElementById('loading-spinner').style.display = 'block'; };
         
+        // Stall detection - if waiting for more than 15 seconds, retry
+        let stallTimer = null;
+        let lastBufferCheck = 0;
+        
+        video.onwaiting = () => { 
+            document.getElementById('loading-spinner').style.display = 'block';
+            
+            // Start stall detection
+            if (stallTimer) clearTimeout(stallTimer);
+            lastBufferCheck = video.currentTime;
+            
+            stallTimer = setTimeout(() => {
+                // Check if we're still stalled at the same position
+                if (Math.abs(video.currentTime - lastBufferCheck) < 0.5 && !video.paused) {
+                    console.warn('Player: Stall detected, attempting recovery...');
+                    handlePlaybackError({ code: 'STALL', message: 'Playback stalled' });
+                }
+            }, 15000); // 15 second stall threshold
+        };
+        
         video.onplaying = () => { 
             document.getElementById('loading-spinner').style.display = 'none';
+            
+            // Clear stall timer
+            if (stallTimer) {
+                clearTimeout(stallTimer);
+                stallTimer = null;
+            }
+            
             // Only reset retry count if playback is stable for 10 seconds
             if (playbackStableTimer) clearTimeout(playbackStableTimer);
             playbackStableTimer = setTimeout(() => {
                 retryCount = 0;
                 console.log('Player: Playback stable, retry count reset');
             }, 10000);
+        };
+        
+        video.oncanplaythrough = () => {
+            // Clear stall timer when we have enough buffer
+            if (stallTimer) {
+                clearTimeout(stallTimer);
+                stallTimer = null;
+            }
         };
 
         // Handle stream ending (normal or premature)
@@ -619,6 +846,11 @@
             progressBar.style.width = `${pct || 0}%`;
             timeDisplay.textContent = `${formatTime(currentTime)} / ${formatTime(currentDuration)}`;
             updateSubtitles(currentTime);
+            
+            // Check for next episode button (Basic Mode TV shows only)
+            if (typeof checkShowNextEpisodeButton === 'function') {
+                checkShowNextEpisodeButton();
+            }
         };
         
         video.onprogress = () => {
@@ -764,28 +996,29 @@
 
             const allItems = [noneItem];
 
-            // 1. Fetch Wyzie
-            try {
-                let wyzieUrl = `https://sub.wyzie.ru/search?id=${tmdbId}`;
-                if (season && episode) wyzieUrl += `&season=${season}&episode=${episode}`;
-                
-                const res = await fetch(wyzieUrl);
-                const wyzieData = await res.json();
-                
-                if (wyzieData && wyzieData.length > 0) {
-                    const sep = document.createElement('div');
-                    sep.style.padding = '10px 15px';
-                    sep.style.fontSize = '12px';
-                    sep.style.color = 'var(--accent-purple)';
-                    sep.style.fontWeight = 'bold';
-                    sep.style.textTransform = 'uppercase';
-                    sep.style.letterSpacing = '1px';
-                    sep.innerText = 'Wyzie Subtitles';
-                    allItems.push(sep);
+            // 1. Fetch Wyzie (requires TMDB ID)
+            if (tmdbId) {
+                try {
+                    let wyzieUrl = `https://sub.wyzie.ru/search?id=${tmdbId}`;
+                    if (season && episode) wyzieUrl += `&season=${season}&episode=${episode}`;
+                    
+                    const res = await fetch(wyzieUrl);
+                    const wyzieData = await res.json();
+                    
+                    if (wyzieData && wyzieData.length > 0) {
+                        const sep = document.createElement('div');
+                        sep.style.padding = '10px 15px';
+                        sep.style.fontSize = '12px';
+                        sep.style.color = 'var(--accent-purple)';
+                        sep.style.fontWeight = 'bold';
+                        sep.style.textTransform = 'uppercase';
+                        sep.style.letterSpacing = '1px';
+                        sep.innerText = 'Wyzie Subtitles';
+                        allItems.push(sep);
 
-                    wyzieData.forEach(sub => {
-                        const el = document.createElement('div');
-                        el.className = 'list-item';
+                        wyzieData.forEach(sub => {
+                            const el = document.createElement('div');
+                            el.className = 'list-item';
                         el.innerHTML = `<img src="${sub.flagUrl || ''}" class="sub-flag" onerror="this.style.display='none'"><span>${sub.display}</span>`;
                         el.onclick = async () => {
                             document.querySelectorAll('#subs-list .list-item').forEach(x => x.classList.remove('active'));
@@ -800,6 +1033,7 @@
                     });
                 }
             } catch (e) { console.error('Wyzie fetch error', e); }
+            } // End of if (tmdbId) for Wyzie
 
             // 2. Fetch from Stremio Addons
             try {
@@ -936,6 +1170,974 @@
                 else window.close();
             }
         });
+
+        // ============================================================================
+        // NEXT EPISODE AUTO-PLAY (Basic Mode TV Shows Only)
+        // ============================================================================
+        
+        const nextEpBtn = document.getElementById('next-episode-btn');
+        let nextEpisodeData = null;
+        let nextEpisodeShown = false;
+        let currentTorrentHash = null;
+        let currentTorrentFiles = null;
+        let currentProviderType = null; // 'jackett' or addon ID
+        let currentStreamQuality = null;
+        
+        // Extract torrent hash from WebTorrent stream URL
+        function extractTorrentHash(url) {
+            if (!url) return null;
+            try {
+                const urlObj = new URL(url);
+                return urlObj.searchParams.get('hash');
+            } catch (e) {
+                return null;
+            }
+        }
+        
+        // Check if we're streaming via WebTorrent (local stream)
+        function isWebTorrentStream(url) {
+            return url && url.includes('/api/stream-file');
+        }
+        
+        // Initialize next episode detection for Basic Mode TV shows
+        async function initNextEpisode() {
+            // Only for Basic Mode TV shows
+            if (!isBasicMode || type !== 'tv' || !season || !episode) {
+                debugLog('[NextEp] Not applicable: isBasicMode=' + isBasicMode + ', type=' + type);
+                return;
+            }
+            
+            debugLog('[NextEp] Initializing for S' + season + 'E' + episode);
+            
+            // Extract current torrent hash if WebTorrent stream
+            currentTorrentHash = extractTorrentHash(videoUrl);
+            if (currentTorrentHash) {
+                debugLog('[NextEp] Current torrent hash: ' + currentTorrentHash);
+                // Fetch torrent files for same-torrent detection
+                try {
+                    const res = await fetch(`/api/torrent-info?hash=${currentTorrentHash}`);
+                    if (res.ok) {
+                        const data = await res.json();
+                        currentTorrentFiles = data.files || [];
+                        debugLog('[NextEp] Loaded ' + currentTorrentFiles.length + ' files from current torrent');
+                    }
+                } catch (e) {
+                    debugLog('[NextEp] Could not fetch torrent files: ' + e.message, 'warn');
+                }
+            }
+            
+            // Get provider info from URL params (primary) or localStorage (fallback)
+            let savedShowName = showName || '';
+            currentProviderType = provider || null;
+            currentStreamQuality = quality || '1080p';
+            
+            // Fallback to localStorage if URL params are missing
+            if (!currentProviderType) {
+                try {
+                    const providerInfo = localStorage.getItem('basicmode_last_provider');
+                    if (providerInfo) {
+                        const info = JSON.parse(providerInfo);
+                        currentProviderType = info.provider;
+                        if (!currentStreamQuality || currentStreamQuality === '1080p') {
+                            currentStreamQuality = info.quality || '1080p';
+                        }
+                        if (!savedShowName) savedShowName = info.showName || '';
+                        debugLog('[NextEp] Got provider from localStorage: ' + currentProviderType);
+                    }
+                } catch (e) {
+                    debugLog('[NextEp] Error reading localStorage: ' + e.message, 'warn');
+                }
+            }
+            
+            debugLog('[NextEp] Provider: ' + currentProviderType);
+            debugLog('[NextEp] Provider URL: ' + providerUrl);
+            debugLog('[NextEp] Quality: ' + currentStreamQuality);
+            debugLog('[NextEp] Show name: ' + savedShowName);
+            
+            // Calculate next episode
+            const nextEp = parseInt(episode) + 1;
+            nextEpisodeData = {
+                season: parseInt(season),
+                episode: nextEp,
+                tmdbId: tmdbId,
+                imdbId: imdbId,
+                showName: savedShowName
+            };
+            
+            debugLog('[NextEp] Next episode will be S' + season + 'E' + nextEp);
+            debugLog('[NextEp] IMDB ID: ' + imdbId + ', TMDB ID: ' + tmdbId);
+        }
+        
+        // Check if next episode exists in current torrent
+        function findNextEpisodeInTorrent(files, targetSeason, targetEpisode) {
+            if (!files || !files.length) return null;
+            
+            const s = parseInt(targetSeason);
+            const e = parseInt(targetEpisode);
+            
+            debugLog('[NextEp] Searching for S' + s + 'E' + e + ' in ' + files.length + ' files');
+            
+            for (const file of files) {
+                // Handle different file structures (WebTorrent vs Debrid)
+                const fullPath = (file.path || file.filename || file.name || '').toLowerCase();
+                const fileName = fullPath.split('/').pop(); // Get just the filename
+                
+                // Skip non-video files
+                if (!fileName.match(/\.(mp4|mkv|avi|mov|wmv|flv|webm|m4v)$/i)) continue;
+                if (fileName.includes('sample') || fileName.includes('trailer')) continue;
+                
+                // Check for episode patterns
+                const patterns = [
+                    new RegExp(`s0*${s}e0*${e}\\b`, 'i'),
+                    new RegExp(`\\b${s}x0*${e}\\b`, 'i'),
+                    new RegExp(`season\\s*${s}\\s*episode\\s*${e}\\b`, 'i'),
+                    new RegExp(`s0*${s}\\.e0*${e}\\b`, 'i')
+                ];
+                
+                for (const pattern of patterns) {
+                    if (pattern.test(fileName)) {
+                        debugLog('[NextEp] Found next episode in torrent: ' + fileName);
+                        return file;
+                    }
+                }
+            }
+            
+            debugLog('[NextEp] Episode not found in torrent files');
+            return null;
+        }
+        
+        // Show next episode button when in last 5 minutes
+        function checkShowNextEpisodeButton() {
+            if (!isBasicMode || type !== 'tv' || !nextEpisodeData || nextEpisodeShown) return;
+            
+            const currentDuration = (isTranscoding && videoDuration > 0) ? videoDuration : video.duration;
+            const currentTime = getCurrentRealTime();
+            const remainingTime = currentDuration - currentTime;
+            
+            // Show button when 5 minutes (300 seconds) or less remaining
+            if (remainingTime <= 300 && remainingTime > 0 && currentDuration > 0) {
+                showNextEpisodeButton();
+            }
+        }
+        
+        function showNextEpisodeButton() {
+            if (nextEpisodeShown) return;
+            nextEpisodeShown = true;
+            
+            const titleSpan = nextEpBtn.querySelector('.next-ep-title');
+            titleSpan.textContent = `S${nextEpisodeData.season}E${nextEpisodeData.episode}`;
+            
+            nextEpBtn.style.display = 'flex';
+            debugLog('[NextEp] Button shown for S' + nextEpisodeData.season + 'E' + nextEpisodeData.episode);
+        }
+        
+        // Handle next episode button click
+        nextEpBtn.onclick = async () => {
+            if (nextEpBtn.disabled) return;
+            
+            nextEpBtn.disabled = true;
+            nextEpBtn.classList.add('loading');
+            nextEpBtn.querySelector('.next-ep-title').textContent = 'Loading...';
+            
+            // Auto-show debug overlay when clicking next episode
+            if (!debugVisible) toggleDebug();
+            
+            try {
+                await playNextEpisode();
+            } catch (err) {
+                debugLog('[NextEp] ========== ERROR ==========', 'error');
+                debugLog('[NextEp] Error: ' + err.message, 'error');
+                nextEpBtn.querySelector('.next-ep-title').textContent = 'Error';
+                nextEpBtn.classList.remove('loading');
+                setTimeout(() => {
+                    nextEpBtn.disabled = false;
+                    nextEpBtn.querySelector('.next-ep-title').textContent = `S${nextEpisodeData.season}E${nextEpisodeData.episode}`;
+                }, 3000);
+            }
+        };
+        
+        async function playNextEpisode() {
+            const { season: nextSeason, episode: nextEp, tmdbId: tid, imdbId: iid } = nextEpisodeData;
+            
+            debugLog('[NextEp] ========== PLAY NEXT EPISODE ==========', 'info');
+            debugLog('[NextEp] Target: S' + nextSeason + 'E' + nextEp);
+            debugLog('[NextEp] TMDB ID: ' + tid);
+            debugLog('[NextEp] IMDB ID: ' + iid);
+            debugLog('[NextEp] Is Debrid: ' + isDebrid);
+            debugLog('[NextEp] Current torrent hash: ' + currentTorrentHash);
+            debugLog('[NextEp] Current torrent files: ' + (currentTorrentFiles?.length || 0));
+            
+            // Step 1: Check if next episode is in current torrent (Same Torrent Fast-Path)
+            if (currentTorrentFiles && currentTorrentFiles.length > 0) {
+                debugLog('[NextEp] Checking same-torrent fast path...');
+                const nextFile = findNextEpisodeInTorrent(currentTorrentFiles, nextSeason, nextEp);
+                if (nextFile) {
+                    debugLog('[NextEp] FAST PATH: Next episode found in same torrent');
+                    await playFromSameTorrent(nextFile, nextSeason, nextEp);
+                    return;
+                }
+                debugLog('[NextEp] Episode not in current torrent, will search...');
+            } else {
+                debugLog('[NextEp] No current torrent files, will search...');
+            }
+            
+            // Step 2: Smart Background Search
+            debugLog('[NextEp] Starting background search...');
+            const result = await searchNextEpisode(nextSeason, nextEp, tid, iid);
+            
+            if (!result) {
+                throw new Error('No sources found for next episode');
+            }
+            
+            debugLog('[NextEp] Found source: ' + result.title);
+            debugLog('[NextEp] Magnet/URL: ' + (result.magnet?.substring(0, 80) || 'N/A') + '...');
+            
+            // Step 3: Cleanup current torrent if WebTorrent (non-debrid)
+            if (!isDebrid && currentTorrentHash) {
+                debugLog('[NextEp] Cleaning up current WebTorrent session...');
+                try {
+                    await fetch(`/api/stop-stream?hash=${currentTorrentHash}`);
+                    if (window.electronAPI?.clearWebtorrentTemp) {
+                        await window.electronAPI.clearWebtorrentTemp();
+                    }
+                } catch (e) {
+                    debugLog('[NextEp] Cleanup warning: ' + e.message, 'warn');
+                }
+            }
+            
+            // Step 4: Play the next episode
+            await playNewSource(result, nextSeason, nextEp, tid, iid);
+        }
+        
+        async function playFromSameTorrent(file, nextSeason, nextEp) {
+            const fileIndex = file.index !== undefined ? file.index : currentTorrentFiles.indexOf(file);
+            const newStreamUrl = `http://127.0.0.1:6987/api/stream-file?hash=${currentTorrentHash}&file=${fileIndex}`;
+            
+            // Prepare the file for streaming
+            fetch(`/api/prepare-file?hash=${currentTorrentHash}&file=${fileIndex}`);
+            
+            debugLog('[NextEp] Same torrent fast-path: loading new episode');
+            debugLog('[NextEp] New stream URL: ' + newStreamUrl);
+            
+            // CRITICAL: Update the global videoUrl so transcoder uses the new file
+            videoUrl = newStreamUrl;
+            
+            // Reset player state
+            nextEpisodeShown = false;
+            nextEpBtn.style.display = 'none';
+            nextEpBtn.disabled = false;
+            nextEpBtn.classList.remove('loading');
+            subtitles = [];
+            activeSub = null;
+            overlay.innerHTML = '';
+            retryCount = 0;
+            lastAbsoluteTime = 0;
+            videoDuration = 0; // Reset duration, will be fetched from new file
+            
+            // Update title (include show name if available)
+            const currentShowName = nextEpisodeData.showName || showName;
+            titleEl.textContent = currentShowName ? `${currentShowName} - S${nextSeason}:E${nextEp}` : `S${nextSeason}:E${nextEp}`;
+            
+            // Update next episode data for the next transition
+            nextEpisodeData = {
+                season: nextSeason,
+                episode: nextEp + 1,
+                tmdbId: tmdbId,
+                imdbId: imdbId,
+                showName: nextEpisodeData.showName
+            };
+            
+            // Show loading spinner
+            document.getElementById('loading-spinner').style.display = 'block';
+            
+            // Fetch new metadata (duration, audio tracks) for the new file
+            try {
+                debugLog('[NextEp] Fetching metadata for new episode...');
+                const metaRes = await fetch(`http://127.0.0.1:6987/api/transcode/metadata?url=${encodeURIComponent(newStreamUrl)}`);
+                if (metaRes.ok) {
+                    const metadata = await metaRes.json();
+                    if (metadata.duration) {
+                        videoDuration = metadata.duration;
+                        debugLog('[NextEp] New episode duration: ' + videoDuration);
+                    }
+                    if (metadata.audioTracks) {
+                        audioTracks = metadata.audioTracks;
+                        currentAudioTrack = 0; // Reset to first audio track
+                        renderAudioTracks();
+                    }
+                }
+            } catch (e) {
+                debugLog('[NextEp] Failed to fetch metadata: ' + e.message, 'error');
+            }
+            
+            // Load the new stream using transcoder (since isTranscoding is always true)
+            loadTranscodedStream(newStreamUrl, 0);
+            
+            // Fetch new subtitles
+            if (tmdbId || imdbId) {
+                initSubtitles(tmdbId, imdbId, nextSeason, nextEp, type);
+            }
+            
+            debugLog('[NextEp] Now playing S' + nextSeason + 'E' + nextEp);
+        }
+        
+        async function searchNextEpisode(nextSeason, nextEp, tid, iid) {
+            const s = String(nextSeason).padStart(2, '0');
+            const e = String(nextEp).padStart(2, '0');
+            
+            debugLog('[NextEp] ========== SEARCH START ==========', 'info');
+            debugLog('[NextEp] Target: S' + s + 'E' + e);
+            debugLog('[NextEp] Provider type: ' + currentProviderType);
+            debugLog('[NextEp] Stream quality: ' + currentStreamQuality);
+            debugLog('[NextEp] IMDB ID: ' + iid);
+            debugLog('[NextEp] TMDB ID: ' + tid);
+            
+            // Use saved show name or fetch from TMDB
+            let showName = nextEpisodeData.showName || '';
+            debugLog('[NextEp] Saved show name: ' + showName);
+            
+            if (!showName && tid) {
+                try {
+                    debugLog('[NextEp] Fetching show name from TMDB...');
+                    // Use the server's TMDB proxy instead of direct API call
+                    const tmdbRes = await fetch(`/tmdb/tv/${tid}`);
+                    if (tmdbRes.ok) {
+                        const tmdbData = await tmdbRes.json();
+                        showName = tmdbData.name || '';
+                        debugLog('[NextEp] Got show name from TMDB: ' + showName);
+                    }
+                } catch (err) {
+                    debugLog('[NextEp] TMDB fetch error: ' + err.message, 'error');
+                }
+            }
+            
+            debugLog('[NextEp] Final show name: ' + showName);
+            
+            let sources = [];
+            
+            // Use same provider as original search
+            if (currentProviderType && currentProviderType !== 'jackett') {
+                // Stremio addon search (user selected a specific addon)
+                debugLog('[NextEp] Using Stremio addon: ' + currentProviderType);
+                if (!iid) {
+                    debugLog('[NextEp] No IMDB ID available for addon search!', 'warn');
+                }
+                sources = await searchAddonForEpisode(currentProviderType, iid, nextSeason, nextEp);
+            } else if (showName) {
+                // Jackett search (primary - we have show name)
+                debugLog('[NextEp] Using Jackett search (primary)');
+                sources = await searchJackettForEpisode(showName, nextSeason, nextEp);
+                
+                // If Jackett fails and we have IMDB ID, try Torrentio as fallback
+                if ((!sources || sources.length === 0) && iid) {
+                    debugLog('[NextEp] Jackett found nothing, trying Torrentio fallback...');
+                    sources = await searchTorrentioForEpisode(iid, nextSeason, nextEp);
+                }
+            } else if (iid) {
+                // No show name but have IMDB ID - use Torrentio
+                debugLog('[NextEp] No show name, using Torrentio with IMDB ID');
+                sources = await searchTorrentioForEpisode(iid, nextSeason, nextEp);
+            } else {
+                debugLog('[NextEp] No show name and no IMDB ID - cannot search!', 'error');
+                return null;
+            }
+            
+            debugLog('[NextEp] Search returned ' + (sources?.length || 0) + ' sources');
+            
+            if (!sources || sources.length === 0) {
+                debugLog('[NextEp] No sources found!', 'warn');
+                return null;
+            }
+            
+            // Filter and sort: Quality match first, then highest seeders
+            const targetQuality = currentStreamQuality || '1080p';
+            debugLog('[NextEp] Target quality: ' + targetQuality);
+            
+            sources.sort((a, b) => {
+                // Prioritize cached sources (⚡)
+                const aCached = (a.title || '').includes('⚡') || (a.indexer || '').includes('⚡');
+                const bCached = (b.title || '').includes('⚡') || (b.indexer || '').includes('⚡');
+                if (aCached && !bCached) return -1;
+                if (!aCached && bCached) return 1;
+                
+                // Prioritize matching quality
+                const aMatch = a.quality === targetQuality ? 1 : 0;
+                const bMatch = b.quality === targetQuality ? 1 : 0;
+                if (aMatch !== bMatch) return bMatch - aMatch;
+                
+                // Then by seeders
+                return (b.seeders || 0) - (a.seeders || 0);
+            });
+            
+            debugLog('[NextEp] ========== SEARCH RESULTS ==========', 'info');
+            debugLog('[NextEp] Total sources found: ' + sources.length);
+            if (sources.length > 0) {
+                debugLog('[NextEp] Top 3 results:');
+                sources.slice(0, 3).forEach((s, i) => {
+                    debugLog(`[NextEp]   ${i+1}. ${s.title?.substring(0, 50)}... | Q: ${s.quality} | S: ${s.seeders}`);
+                });
+                debugLog('[NextEp] Best match: ' + sources[0]?.title);
+            } else {
+                debugLog('[NextEp] No sources found!', 'warn');
+            }
+            
+            return sources[0];
+        }
+        
+        async function searchJackettForEpisode(showName, season, episode) {
+            const s = String(season).padStart(2, '0');
+            const e = String(episode).padStart(2, '0');
+            
+            // Try multiple query patterns like the details page does
+            const queries = [
+                `${showName} S${s}E${e}`,
+                `${showName} S${s}`  // Also search for season packs
+            ];
+            
+            debugLog('[NextEp] ========== JACKETT SEARCH ==========', 'info');
+            debugLog('[NextEp] Show name: ' + showName);
+            debugLog('[NextEp] Target: S' + s + 'E' + e);
+            debugLog('[NextEp] Queries: ' + queries.join(', '));
+            
+            const allResults = [];
+            
+            for (const query of queries) {
+                try {
+                    debugLog('[NextEp] Searching Jackett for: ' + query);
+                    // Note: apikey is empty, server will use internal key
+                    const url = `/api/jackett?apikey=&t=search&q=${encodeURIComponent(query)}`;
+                    
+                    const res = await fetch(url);
+                    
+                    if (!res.ok) {
+                        debugLog('[NextEp] Jackett request failed: ' + res.status + ' ' + res.statusText, 'warn');
+                        continue;
+                    }
+                    
+                    const xmlText = await res.text();
+                    debugLog('[NextEp] Jackett response length: ' + xmlText.length);
+                    
+                    const parser = new DOMParser();
+                    const xmlDoc = parser.parseFromString(xmlText, 'text/xml');
+                    
+                    // Check for errors
+                    const error = xmlDoc.querySelector('error');
+                    if (error) {
+                        debugLog('[NextEp] Jackett error: ' + error.getAttribute('description'), 'warn');
+                        continue;
+                    }
+                    
+                    const items = Array.from(xmlDoc.querySelectorAll('item'));
+                    debugLog('[NextEp] Jackett returned ' + items.length + ' items for: ' + query);
+                    
+                    items.forEach(item => {
+                        const title = item.querySelector('title')?.textContent || '';
+                        const link = item.querySelector('link')?.textContent || '';
+                        const size = item.querySelector('size')?.textContent || item.querySelector('enclosure')?.getAttribute('length') || '0';
+                        
+                        // Get torznab attributes
+                        const attrs = {};
+                        const torznabAttrs = item.getElementsByTagName('torznab:attr');
+                        for (let i = 0; i < torznabAttrs.length; i++) {
+                            const name = torznabAttrs[i].getAttribute('name');
+                            const value = torznabAttrs[i].getAttribute('value');
+                            if (name) attrs[name] = value;
+                        }
+                        // Fallback for non-namespaced attrs
+                        if (Object.keys(attrs).length === 0) {
+                            item.querySelectorAll('attr').forEach(attr => {
+                                attrs[attr.getAttribute('name')] = attr.getAttribute('value');
+                            });
+                        }
+                        
+                        const magnet = attrs['magneturl'] || (link && link.startsWith('magnet:') ? link : null);
+                        const seeders = parseInt(attrs['seeders']) || 0;
+                        const tracker = item.querySelector('jackettindexer')?.textContent || 
+                                       item.querySelector('prowlarrindexer')?.textContent || 'Unknown';
+                        
+                        // Skip if no magnet/link or no seeders
+                        if (!magnet && !link) return;
+                        if (seeders === 0) return;
+                        
+                        // Filter: must contain the episode pattern or be a season pack
+                        const titleLower = title.toLowerCase();
+                        const hasEpisode = titleLower.includes(`s${s}e${e}`) || 
+                                          titleLower.includes(`${season}x${e}`) ||
+                                          titleLower.includes(`s${s.replace(/^0/, '')}e${e}`);
+                        const isSeasonPack = (titleLower.includes(`s${s}`) || titleLower.includes(`season ${season}`)) && 
+                                            !titleLower.match(/s\d+e\d+/i);
+                        
+                        if (!hasEpisode && !isSeasonPack) return;
+                        
+                        // Detect quality
+                        let quality = 'Unknown';
+                        if (titleLower.includes('2160p') || titleLower.includes('4k')) quality = '4K';
+                        else if (titleLower.includes('1080p')) quality = '1080p';
+                        else if (titleLower.includes('720p')) quality = '720p';
+                        else if (titleLower.includes('480p')) quality = '480p';
+                        
+                        // Detect codec
+                        let codec = 'h264';
+                        if (titleLower.includes('x265') || titleLower.includes('hevc')) codec = 'HEVC';
+                        else if (titleLower.includes('x264')) codec = 'x264';
+                        
+                        allResults.push({
+                            title,
+                            magnet: magnet || link,
+                            link,
+                            seeders,
+                            size: parseInt(size),
+                            quality,
+                            codec,
+                            provider: 'jackett',
+                            indexer: tracker,
+                            isSeasonPack
+                        });
+                    });
+                } catch (err) {
+                    debugLog('[NextEp] Jackett search error: ' + err.message, 'error');
+                }
+            }
+            
+            // Deduplicate by magnet/link
+            const seen = new Set();
+            const unique = allResults.filter(r => {
+                const key = r.magnet || r.link;
+                if (seen.has(key)) return false;
+                seen.add(key);
+                return true;
+            });
+            
+            debugLog('[NextEp] Jackett total unique results: ' + unique.length);
+            return unique;
+        }
+        
+        // Direct Torrentio search (fallback when no provider is saved)
+        async function searchTorrentioForEpisode(imdbId, season, episode) {
+            debugLog('[NextEp] ========== TORRENTIO SEARCH ==========', 'info');
+            debugLog('[NextEp] IMDB ID: ' + imdbId);
+            debugLog('[NextEp] Target: S' + season + 'E' + episode);
+            
+            if (!imdbId) {
+                debugLog('[NextEp] No IMDB ID for Torrentio search', 'warn');
+                return [];
+            }
+            
+            try {
+                const stremioId = `${imdbId}:${season}:${episode}`;
+                // Use Torrentio with quality filter (no cam/screener)
+                const url = `https://torrentio.strem.fun/qualityfilter=scr,cam/stream/series/${stremioId}.json`;
+                
+                debugLog('[NextEp] Torrentio URL: ' + url);
+                
+                const res = await fetch(url);
+                debugLog('[NextEp] Torrentio response: ' + res.status);
+                
+                if (!res.ok) {
+                    debugLog('[NextEp] Torrentio request failed: ' + res.status, 'warn');
+                    return [];
+                }
+                
+                const data = await res.json();
+                const streams = data.streams || [];
+                
+                debugLog('[NextEp] Torrentio returned ' + streams.length + ' streams');
+                
+                return streams.map(stream => {
+                    const fullText = ((stream.name || '') + ' ' + (stream.title || '')).toLowerCase();
+                    
+                    // Extract seeders from emoji format: 👤 100 or 👥 1
+                    const seederMatch = (stream.title || '').match(/[👤👥]\s*(\d+)/);
+                    const seeders = seederMatch ? parseInt(seederMatch[1]) : 0;
+                    
+                    // Extract size
+                    let size = 0;
+                    const sizeMatch = (stream.title || '').match(/[💾📦]\s*([\d.]+)\s*([GM]B)/i);
+                    if (sizeMatch) {
+                        const val = parseFloat(sizeMatch[1]);
+                        const unit = sizeMatch[2].toUpperCase();
+                        size = val * (unit === 'GB' ? 1024 * 1024 * 1024 : 1024 * 1024);
+                    } else if (stream.behaviorHints?.videoSize) {
+                        size = stream.behaviorHints.videoSize;
+                    }
+                    
+                    // Build magnet
+                    let magnet = stream.url;
+                    if (!magnet && stream.infoHash) {
+                        const trackers = (stream.sources || [])
+                            .filter(s => s.startsWith('tracker:'))
+                            .map(s => `&tr=${encodeURIComponent(s.replace('tracker:', ''))}`)
+                            .join('');
+                        magnet = `magnet:?xt=urn:btih:${stream.infoHash}&dn=${encodeURIComponent(stream.behaviorHints?.filename || 'stream')}${trackers}`;
+                    }
+                    
+                    // Detect quality
+                    let quality = 'Unknown';
+                    if (fullText.includes('2160p') || fullText.includes('4k')) quality = '4K';
+                    else if (fullText.includes('1080p')) quality = '1080p';
+                    else if (fullText.includes('720p')) quality = '720p';
+                    else if (fullText.includes('480p')) quality = '480p';
+                    
+                    // Check for cached indicator
+                    const isCached = (stream.name || '').includes('⚡');
+                    
+                    return {
+                        title: stream.title || stream.name || '',
+                        magnet,
+                        seeders,
+                        size,
+                        quality,
+                        provider: 'torrentio',
+                        indexer: (isCached ? '⚡ ' : '') + 'Torrentio',
+                        infoHash: stream.infoHash
+                    };
+                }).filter(s => s.magnet);
+            } catch (err) {
+                debugLog('[NextEp] Torrentio search error: ' + err.message, 'error');
+                return [];
+            }
+        }
+        
+        async function searchAddonForEpisode(addonId, imdbId, season, episode) {
+            debugLog('[NextEp] ========== ADDON SEARCH ==========', 'info');
+            debugLog('[NextEp] Addon ID: ' + addonId);
+            debugLog('[NextEp] Provider URL (from params): ' + providerUrl);
+            debugLog('[NextEp] IMDB ID: ' + imdbId);
+            debugLog('[NextEp] Target: S' + season + 'E' + episode);
+            
+            if (!imdbId) {
+                debugLog('[NextEp] No IMDB ID for addon search', 'warn');
+                return [];
+            }
+            
+            let baseUrl = '';
+            let addonName = addonId;
+            
+            // Use providerUrl directly if available (passed from details.js)
+            if (providerUrl) {
+                baseUrl = providerUrl;
+                debugLog('[NextEp] Using providerUrl from URL params: ' + baseUrl);
+            } else {
+                // Fallback: Look up addon from installed list
+                debugLog('[NextEp] No providerUrl, falling back to addon lookup...');
+                try {
+                    let addons = [];
+                    if (window.electronAPI?.addonList) {
+                        const res = await window.electronAPI.addonList();
+                        addons = res.success ? res.addons : [];
+                        debugLog('[NextEp] electronAPI.addonList: ' + (res.success ? 'success' : 'failed'));
+                    } else {
+                        debugLog('[NextEp] electronAPI.addonList not available!', 'warn');
+                    }
+                    debugLog('[NextEp] Found ' + (addons?.length || 0) + ' installed addons');
+                    
+                    const addon = addons?.find(a => (a.manifest?.id || a.id) === addonId);
+                    
+                    if (!addon) {
+                        debugLog('[NextEp] Addon not found: ' + addonId, 'warn');
+                        return [];
+                    }
+                    
+                    addonName = addon.manifest?.name || addon.name || addonId;
+                    debugLog('[NextEp] Found addon: ' + addonName);
+                    
+                    // Get base URL - try multiple sources
+                    baseUrl = addon.baseUrl || addon.transportUrl || addon.manifest?.transportUrl;
+                    
+                    if (!baseUrl && addon.url) {
+                        baseUrl = addon.url.replace('/manifest.json', '');
+                    }
+                    if (!baseUrl && addon.manifestUrl) {
+                        baseUrl = addon.manifestUrl.replace('/manifest.json', '');
+                    }
+                } catch (err) {
+                    debugLog('[NextEp] Addon lookup error: ' + err.message, 'error');
+                    return [];
+                }
+            }
+            
+            if (!baseUrl) {
+                debugLog('[NextEp] No base URL for addon!', 'error');
+                return [];
+            }
+            if (baseUrl.endsWith('/')) baseUrl = baseUrl.slice(0, -1);
+            
+            try {
+                const stremioId = `${imdbId}:${season}:${episode}`;
+                const url = `${baseUrl}/stream/series/${stremioId}.json`;
+                
+                debugLog('[NextEp] Base URL: ' + baseUrl);
+                debugLog('[NextEp] Stremio ID: ' + stremioId);
+                debugLog('[NextEp] Request URL: ' + url);
+                
+                const res = await fetch(url);
+                debugLog('[NextEp] Addon response: ' + res.status);
+                
+                if (!res.ok) {
+                    debugLog('[NextEp] Addon request failed: ' + res.status + ' ' + res.statusText, 'warn');
+                    return [];
+                }
+                
+                const data = await res.json();
+                const streams = data.streams || [];
+                
+                debugLog('[NextEp] Addon returned ' + streams.length + ' streams');
+                
+                return streams.map(stream => {
+                    const fullText = ((stream.name || '') + ' ' + (stream.title || '')).toLowerCase();
+                    
+                    // Extract seeders from emoji format: 👤 100 or � 1
+                    const seederMatch = (stream.title || '').match(/[👤👥]\s*(\d+)/);
+                    const seeders = seederMatch ? parseInt(seederMatch[1]) : 0;
+                    
+                    // Extract size from emoji format: 💾 6.91 GB
+                    let size = 0;
+                    const sizeMatch = (stream.title || '').match(/[💾📦]\s*([\d.]+)\s*([GM]B)/i);
+                    if (sizeMatch) {
+                        const val = parseFloat(sizeMatch[1]);
+                        const unit = sizeMatch[2].toUpperCase();
+                        size = val * (unit === 'GB' ? 1024 * 1024 * 1024 : 1024 * 1024);
+                    } else if (stream.behaviorHints?.videoSize) {
+                        size = stream.behaviorHints.videoSize;
+                    }
+                    
+                    // Build URL/magnet - prioritize direct URL, then infoHash
+                    let playUrl = stream.url || '';
+                    const isDirectUrl = playUrl && playUrl.startsWith('http') && !playUrl.includes('.torrent');
+                    
+                    if (!playUrl && stream.infoHash) {
+                        // Build magnet from infoHash with trackers
+                        const defaultTrackers = [
+                            'udp://tracker.opentrackr.org:1337/announce',
+                            'udp://open.tracker.cl:1337/announce',
+                            'udp://tracker.openbittorrent.com:6969/announce'
+                        ];
+                        const trackers = (stream.sources || [])
+                            .filter(s => s.startsWith('tracker:'))
+                            .map(s => s.replace('tracker:', ''));
+                        const allTrackers = trackers.length > 0 ? trackers : defaultTrackers;
+                        const trackerParams = allTrackers.map(t => `&tr=${encodeURIComponent(t)}`).join('');
+                        playUrl = `magnet:?xt=urn:btih:${stream.infoHash}&dn=${encodeURIComponent(stream.behaviorHints?.filename || 'stream')}${trackerParams}`;
+                    }
+                    
+                    // Detect quality
+                    let quality = 'Unknown';
+                    if (fullText.includes('2160p') || fullText.includes('4k')) quality = '4K';
+                    else if (fullText.includes('1080p')) quality = '1080p';
+                    else if (fullText.includes('720p')) quality = '720p';
+                    else if (fullText.includes('480p')) quality = '480p';
+                    
+                    // Check for cached indicator
+                    const isCached = (stream.name || '').includes('⚡');
+                    
+                    return {
+                        title: stream.title || stream.name || '',
+                        magnet: playUrl,
+                        seeders,
+                        size,
+                        quality,
+                        provider: addonId,
+                        indexer: (isCached ? '⚡ ' : '') + addonName,
+                        infoHash: stream.infoHash,
+                        isDirectUrl: isDirectUrl
+                    };
+                }).filter(s => s.magnet);
+            } catch (err) {
+                debugLog('[NextEp] Addon search error: ' + err.message, 'error');
+                return [];
+            }
+        }
+        
+        async function playNewSource(source, nextSeason, nextEp, tid, iid) {
+            const magnet = source.magnet;
+            
+            debugLog('[NextEp] ========== PLAY NEW SOURCE ==========', 'info');
+            debugLog('[NextEp] Source: ' + source.title);
+            debugLog('[NextEp] URL/Magnet: ' + (magnet?.substring(0, 80) || 'N/A') + '...');
+            
+            // Check if this is a direct streaming URL (not a magnet or torrent)
+            const isDirectUrl = magnet && magnet.startsWith('http') && !magnet.includes('.torrent') && !magnet.startsWith('magnet:');
+            
+            if (isDirectUrl) {
+                // Direct URL - play through transcoder immediately
+                debugLog('[NextEp] Direct URL detected, playing through transcoder');
+                await loadNewEpisodeInPlayer(magnet, nextSeason, nextEp, tid, iid, null);
+                return;
+            }
+            
+            // Check if debrid
+            const settingsRes = await fetch('/api/settings');
+            const settings = await settingsRes.json();
+            const useDebrid = settings.useDebrid && settings.debridAuth;
+            
+            debugLog('[NextEp] Use Debrid: ' + useDebrid);
+            debugLog('[NextEp] Debrid Provider: ' + settings.debridProvider);
+            
+            if (useDebrid) {
+                // Debrid path
+                debugLog('[NextEp] Using Debrid for next episode');
+                const prepRes = await fetch('/api/debrid/prepare', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ magnet })
+                });
+                const prepData = await prepRes.json();
+                
+                debugLog('[NextEp] Debrid prepare: ' + (prepData ? 'success' : 'failed'));
+                
+                if (prepData && prepData.info) {
+                    const files = prepData.info.files || [];
+                    debugLog('[NextEp] Debrid returned ' + files.length + ' files');
+                    
+                    const targetFile = findNextEpisodeInTorrent(files, nextSeason, nextEp);
+                    
+                    if (targetFile) {
+                        debugLog('[NextEp] Found target: ' + (targetFile.path || targetFile.filename || targetFile.name));
+                        let fileLink = targetFile.links?.[0];
+                        
+                        // Real-Debrid fallback
+                        if (!fileLink && settings.debridProvider === 'realdebrid' && prepData.info.links) {
+                            const selectedFiles = files.filter(f => f.selected === 1);
+                            const linkIndex = selectedFiles.indexOf(targetFile);
+                            if (linkIndex !== -1) fileLink = prepData.info.links[linkIndex];
+                        }
+                        
+                        if (fileLink) {
+                            debugLog('[NextEp] Unrestricting file link...');
+                            const unresRes = await fetch('/api/debrid/link', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ link: fileLink })
+                            });
+                            const unresData = await unresRes.json();
+                            
+                            if (unresData.url) {
+                                debugLog('[NextEp] Got stream URL, loading...');
+                                // Load in current player instead of opening new window
+                                await loadNewEpisodeInPlayer(unresData.url, nextSeason, nextEp, tid, iid, null);
+                                return;
+                            }
+                        }
+                    } else {
+                        debugLog('[NextEp] Target file not found in Debrid files!', 'error');
+                    }
+                }
+                throw new Error('Debrid resolution failed');
+            } else {
+                // WebTorrent path - need to stop old torrent first
+                debugLog('[NextEp] Using WebTorrent for next episode');
+                
+                // Stop the old torrent before starting new one
+                if (currentTorrentHash) {
+                    debugLog('[NextEp] Stopping old torrent: ' + currentTorrentHash);
+                    try {
+                        await fetch(`/api/stop-stream?hash=${currentTorrentHash}`);
+                    } catch (e) {
+                        debugLog('[NextEp] Failed to stop old torrent: ' + e.message, 'warn');
+                    }
+                }
+                
+                const torrentRes = await fetch(`/api/torrent-files?magnet=${encodeURIComponent(magnet)}`);
+                const torrentData = await torrentRes.json();
+                
+                if (torrentData && torrentData.videoFiles) {
+                    const allFiles = [...torrentData.videoFiles, ...(torrentData.subtitleFiles || [])];
+                    const targetFile = findNextEpisodeInTorrent(allFiles, nextSeason, nextEp);
+                    
+                    if (targetFile) {
+                        const newStreamUrl = `http://127.0.0.1:6987/api/stream-file?hash=${torrentData.infoHash}&file=${targetFile.index}`;
+                        fetch(`/api/prepare-file?hash=${torrentData.infoHash}&file=${targetFile.index}`);
+                        
+                        // Update current torrent tracking
+                        currentTorrentHash = torrentData.infoHash;
+                        currentTorrentFiles = allFiles;
+                        
+                        // Load in current player
+                        await loadNewEpisodeInPlayer(newStreamUrl, nextSeason, nextEp, tid, iid, torrentData.infoHash);
+                        return;
+                    }
+                }
+                throw new Error('Could not find episode in torrent');
+            }
+        }
+        
+        // Helper function to load a new episode in the current player
+        async function loadNewEpisodeInPlayer(newStreamUrl, nextSeason, nextEp, tid, iid, newTorrentHash) {
+            debugLog('[NextEp] Loading new episode in current player');
+            debugLog('[NextEp] New stream URL: ' + newStreamUrl);
+            
+            // CRITICAL: Update the global videoUrl so transcoder uses the new file
+            videoUrl = newStreamUrl;
+            
+            // Reset player state
+            nextEpisodeShown = false;
+            nextEpBtn.style.display = 'none';
+            nextEpBtn.disabled = false;
+            nextEpBtn.classList.remove('loading');
+            subtitles = [];
+            activeSub = null;
+            overlay.innerHTML = '';
+            retryCount = 0;
+            lastAbsoluteTime = 0;
+            videoDuration = 0; // Reset duration
+            
+            // Update torrent tracking if provided
+            if (newTorrentHash) {
+                currentTorrentHash = newTorrentHash;
+            }
+            
+            // Update title (include show name if available)
+            const currentShowName2 = nextEpisodeData.showName || showName;
+            titleEl.textContent = currentShowName2 ? `${currentShowName2} - S${nextSeason}:E${nextEp}` : `S${nextSeason}:E${nextEp}`;
+            
+            // Update next episode data for the next transition
+            nextEpisodeData = {
+                season: nextSeason,
+                episode: nextEp + 1,
+                tmdbId: tid,
+                imdbId: iid,
+                showName: nextEpisodeData.showName
+            };
+            
+            // Show loading spinner
+            document.getElementById('loading-spinner').style.display = 'block';
+            
+            // Hide debug overlay when successfully loading new episode
+            if (debugVisible) toggleDebug();
+            
+            // Fetch new metadata (duration, audio tracks) for the new file
+            try {
+                debugLog('[NextEp] Fetching metadata...');
+                const metaRes = await fetch(`http://127.0.0.1:6987/api/transcode/metadata?url=${encodeURIComponent(newStreamUrl)}`);
+                if (metaRes.ok) {
+                    const metadata = await metaRes.json();
+                    if (metadata.duration) {
+                        videoDuration = metadata.duration;
+                        debugLog('[NextEp] Duration: ' + videoDuration);
+                    }
+                    if (metadata.audioTracks) {
+                        audioTracks = metadata.audioTracks;
+                        currentAudioTrack = 0;
+                        renderAudioTracks();
+                    }
+                }
+            } catch (e) {
+                debugLog('[NextEp] Failed to fetch metadata: ' + e.message, 'error');
+            }
+            
+            // Load the new stream using transcoder
+            loadTranscodedStream(newStreamUrl, 0);
+            
+            // Fetch new subtitles
+            if (tid || iid) {
+                initSubtitles(tid, iid, nextSeason, nextEp, type);
+            }
+            
+            debugLog('[NextEp] Now playing S' + nextSeason + 'E' + nextEp);
+        }
+        
+        // Initialize next episode detection
+        initNextEpisode();
     </script>
 </body>
 </html>

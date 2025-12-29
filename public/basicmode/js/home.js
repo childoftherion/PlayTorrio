@@ -7,7 +7,8 @@ import {
   getTrendingTVShows,
   getTopRatedTVShows,
   getImageUrl,
-  searchMulti
+  searchMulti,
+  getGenresList
 } from './api.js';
 import { getJackettKey, setJackettKey, getJackettSettings } from './jackett.js';
 import { getInstalledAddons, installAddon, removeAddon } from './addons.js';
@@ -15,16 +16,18 @@ import { initComics } from './comics.js';
 import { initDebridUI } from './debrid.js';
 
 // DOM Elements
-let contentRows, searchResultsContainer, searchGrid, searchInput, heroSection, heroBackdrop, heroTitle, heroOverview, heroInfoBtn;
+let contentRows, searchResultsContainer, searchGrid, searchInput, searchSourceSelect, heroSection, heroBackdrop, heroTitle, heroOverview, heroInfoBtn;
 let settingsBtn, settingsModal, settingsContent, closeSettingsBtn, saveSettingsBtn, jackettApiInput, jackettUrlInput;
 let addonManifestInput, installAddonBtn, installedAddonsList, addonItemTemplate;
 let rowTemplate, cardTemplate;
+let genresSection, genresList, catalogsSection, catalogsList;
 
 const syncHomeElements = () => {
     contentRows = document.getElementById('content-rows');
     searchResultsContainer = document.getElementById('search-results-container');
     searchGrid = document.getElementById('search-grid');
     searchInput = document.getElementById('search-input');
+    searchSourceSelect = document.getElementById('search-source-select');
     heroSection = document.getElementById('hero-section');
     heroBackdrop = document.getElementById('hero-backdrop');
     heroTitle = document.getElementById('hero-title');
@@ -46,6 +49,11 @@ const syncHomeElements = () => {
 
     rowTemplate = document.getElementById('poster-row-template');
     cardTemplate = document.getElementById('poster-card-template');
+    
+    genresSection = document.getElementById('genres-section');
+    genresList = document.getElementById('genres-list');
+    catalogsSection = document.getElementById('catalogs-section');
+    catalogsList = document.getElementById('catalogs-list');
 };
 
 // Navigation Logic
@@ -61,6 +69,8 @@ window.showSection = (section) => {
     if (contentRows) contentRows.classList.add('hidden');
     if (comicsSection) comicsSection.classList.add('hidden');
     if (searchResultsContainer) searchResultsContainer.classList.add('hidden');
+    if (genresSection) genresSection.classList.add('hidden');
+    if (catalogsSection) catalogsSection.classList.add('hidden');
     
     // Deactivate all nav links
     document.querySelectorAll('.nav-link').forEach(l => l.classList.remove('active', 'text-white'));
@@ -77,6 +87,94 @@ window.showSection = (section) => {
         }
         if (mainSearchContainer) mainSearchContainer.classList.add('hidden');
         document.querySelector('.nav-link[onclick*="comics"]')?.classList.add('active', 'text-white');
+    } else if (section === 'genres') {
+        if (genresSection) {
+            genresSection.classList.remove('hidden');
+            initGenres();
+        }
+        if (mainSearchContainer) mainSearchContainer.classList.add('hidden');
+        document.querySelector('.nav-link[onclick*="genres"]')?.classList.add('active', 'text-white');
+    } else if (section === 'catalogs') {
+        if (catalogsSection) {
+            catalogsSection.classList.remove('hidden');
+            initCatalogs();
+        }
+        if (mainSearchContainer) mainSearchContainer.classList.add('hidden');
+        document.querySelector('.nav-link[onclick*="catalogs"]')?.classList.add('active', 'text-white');
+    }
+};
+
+const initGenres = async () => {
+    if (!genresList || genresList.children.length > 0) return; // Already loaded
+    
+    try {
+        const genres = await getGenresList();
+        genres.forEach(genre => {
+            const btn = document.createElement('a');
+            btn.href = `grid.html?type=genre&id=${genre.id}&name=${encodeURIComponent(genre.name)}`;
+            btn.className = 'px-6 py-3 rounded-xl bg-gray-800 border border-gray-700 hover:border-purple-500 hover:bg-gray-700 text-white font-medium transition-all duration-300 transform hover:-translate-y-1 hover:shadow-lg hover:shadow-purple-500/20';
+            btn.textContent = genre.name;
+            genresList.appendChild(btn);
+        });
+    } catch (e) {
+        console.error('Failed to load genres', e);
+        if (genresList) genresList.innerHTML = '<div class="text-red-500">Failed to load genres</div>';
+    }
+};
+
+const initCatalogs = async () => {
+    if (!catalogsList) return;
+    catalogsList.innerHTML = '';
+    
+    try {
+        const addons = await getInstalledAddons();
+        let found = false;
+
+        addons.forEach(addon => {
+            if (addon.manifest.catalogs && addon.manifest.catalogs.length > 0) {
+                // Filter valid catalogs first
+                const validCatalogs = addon.manifest.catalogs.filter(cat => cat.type === 'movie' || cat.type === 'series');
+                
+                if (validCatalogs.length > 0) {
+                    found = true;
+                    
+                    // Add Addon Header/Separator
+                    const header = document.createElement('div');
+                    header.className = 'w-full flex items-center gap-4 mt-6 mb-4 px-4 col-span-full';
+                    header.innerHTML = `
+                        <div class="h-px bg-gray-700 flex-1"></div>
+                        <span class="text-gray-400 font-bold uppercase text-xs tracking-wider">${addon.manifest.name}</span>
+                        <div class="h-px bg-gray-700 flex-1"></div>
+                    `;
+                    catalogsList.appendChild(header);
+
+                    validCatalogs.forEach(cat => {
+                        const btn = document.createElement('a');
+                        const catName = cat.name || cat.id;
+                        // Use a cleaner name for the title
+                        const btnName = `${catName}`; 
+                        
+                        btn.href = `grid.html?type=addon&addonId=${addon.manifest.id}&catalogId=${cat.id}&catalogType=${cat.type}&name=${encodeURIComponent(addon.manifest.name + ' - ' + catName)}`;
+                        btn.className = 'px-6 py-4 rounded-xl bg-gray-800/80 border border-gray-700 hover:border-purple-500 hover:bg-gray-700 text-white font-medium transition-all duration-300 transform hover:-translate-y-1 hover:shadow-lg hover:shadow-purple-500/20 flex flex-col items-center justify-center gap-1 text-center min-h-[80px]';
+                        
+                        btn.innerHTML = `
+                            <span class="text-lg">${catName}</span>
+                            <span class="text-xs text-gray-500 capitalize bg-black/30 px-2 py-0.5 rounded-full">${cat.type}</span>
+                        `;
+                        
+                        catalogsList.appendChild(btn);
+                    });
+                }
+            }
+        });
+        
+        if (!found) {
+            catalogsList.innerHTML = '<div class="text-gray-500 col-span-full text-center py-10">No addon catalogs found. Install addons from Settings.</div>';
+        }
+        
+    } catch (e) {
+        console.error('Failed to load catalogs', e);
+        if (catalogsList) catalogsList.innerHTML = '<div class="text-red-500 col-span-full text-center">Failed to load catalogs</div>';
     }
 };
 
@@ -132,12 +230,19 @@ const createPosterCard = (item, mediaType, isGrid = false) => {
   const ratingValue = clone.querySelector('.rating-value');
 
   // If media_type is inside item (from search), use it. Fallback to passed mediaType.
-  const type = item.media_type || mediaType || (item.title ? 'movie' : 'tv');
+  let type = item.media_type || mediaType || (item.title ? 'movie' : 'tv');
+  // Normalize 'series' to 'tv'
+  if (type === 'series') type = 'tv';
   
   // Skip people or other non-watchable types if they sneak in
   if (type !== 'movie' && type !== 'tv') return null;
 
-  link.href = `details.html?type=${type}&id=${item.id}`;
+  // Build the link - include addonId if present
+  if (item._addonId) {
+    link.href = `details.html?type=${type}&id=${encodeURIComponent(item.id)}&addonId=${item._addonId}`;
+  } else {
+    link.href = `details.html?type=${type}&id=${item.id}`;
+  }
 
   // Adjust classes for grid view vs row view
   if (isGrid) {
@@ -145,8 +250,13 @@ const createPosterCard = (item, mediaType, isGrid = false) => {
       link.classList.add('w-full');
   }
   
+  // Handle poster - could be TMDB path or full URL from addon
   if (item.poster_path) {
-    img.src = getImageUrl(item.poster_path, 'w500');
+    if (item.poster_path.startsWith('http')) {
+      img.src = item.poster_path;
+    } else {
+      img.src = getImageUrl(item.poster_path, 'w500');
+    }
   } else {
     img.src = 'https://via.placeholder.com/500x750/1a1a2e/ffffff?text=No+Poster';
   }
@@ -155,7 +265,7 @@ const createPosterCard = (item, mediaType, isGrid = false) => {
   title.textContent = item.title || item.name;
   
   const releaseDate = item.release_date || item.first_air_date;
-  date.textContent = releaseDate ? releaseDate.split('-')[0] : '';
+  date.textContent = releaseDate ? String(releaseDate).split('-')[0] : '';
   
   if (ratingValue) {
       ratingValue.textContent = item.vote_average ? item.vote_average.toFixed(1) : 'N/A';
@@ -212,6 +322,86 @@ filterButtons.forEach(btn => {
     });
 });
 
+const updateSearchSources = async () => {
+    if (!searchSourceSelect) return;
+    
+    const addons = await getInstalledAddons();
+    const currentVal = searchSourceSelect.value;
+    
+    // Clear except TMDB
+    searchSourceSelect.innerHTML = '<option value="tmdb">TMDB</option>';
+    
+    addons.forEach(addon => {
+        // Check if addon explicitly supports search
+        let supportsSearch = false;
+        
+        if (addon.manifest.catalogs) {
+            supportsSearch = addon.manifest.catalogs.some(c => 
+                c.extra && c.extra.some(e => e.name === 'search')
+            );
+        }
+        
+        // Legacy support check
+        if (!supportsSearch && addon.manifest.extraSupported) {
+            supportsSearch = addon.manifest.extraSupported.includes('search');
+        }
+
+        if (supportsSearch) {
+            const option = document.createElement('option');
+            option.value = `addon:${addon.manifest.id}`;
+            option.textContent = addon.manifest.name;
+            searchSourceSelect.appendChild(option);
+        }
+    });
+    
+    if (currentVal && searchSourceSelect.querySelector(`option[value="${currentVal}"]`)) {
+        searchSourceSelect.value = currentVal;
+    }
+};
+
+const searchAddon = async (addonId, query) => {
+    const addons = await getInstalledAddons();
+    const addon = addons.find(a => a.manifest.id === addonId);
+    if (!addon) throw new Error('Addon not found');
+
+    let url = addon.url.replace('/manifest.json', '');
+    if (url.endsWith('/')) url = url.slice(0, -1);
+
+    // Try to find a catalog that supports search
+    let searchCatalog = null;
+    if (addon.manifest.catalogs) {
+        searchCatalog = addon.manifest.catalogs.find(c => 
+            c.extra && c.extra.some(e => e.name === 'search')
+        );
+    }
+
+    if (!searchCatalog) {
+        // Fallback: Check if we can search specific types
+        const types = addon.manifest.types || ['movie', 'series'];
+        let results = [];
+        
+        for (const type of types) {
+            try {
+                // If the addon doesn't explicitly advertise search but has catalogs, we try standard endpoint
+                const targetUrl = `${url}/catalog/${type}/${addon.manifest.catalogs?.[0]?.id || 'search'}/search=${encodeURIComponent(query)}.json`;
+                const res = await fetch(targetUrl);
+                const data = await res.json();
+                if (data.metas && data.metas.length > 0) {
+                    results = [...results, ...data.metas];
+                }
+            } catch (e) {
+                console.warn(`Search failed for type ${type} on addon ${addonId}`, e);
+            }
+        }
+        return { results: results.map(m => ({...m, media_type: m.type})) };
+    } else {
+        const targetUrl = `${url}/catalog/${searchCatalog.type}/${searchCatalog.id}/search=${encodeURIComponent(query)}.json`;
+        const res = await fetch(targetUrl);
+        const data = await res.json();
+        return { results: (data.metas || []).map(m => ({...m, media_type: m.type})) };
+    }
+};
+
 const handleSearch = async (query) => {
   const q = (query || '').trim();
   if (!q) {
@@ -238,17 +428,41 @@ const handleSearch = async (query) => {
     searchGrid.innerHTML = '<div class="col-span-full text-center py-8"><div class="inline-block w-8 h-8 border-4 border-purple-500 border-t-transparent rounded-full animate-spin"></div></div>';
 
     try {
-        const data = await searchMulti(q);
-        const results = data.results || [];
-        
-        // Store valid results
-        currentSearchResults = results.filter(item => item.media_type === 'movie' || item.media_type === 'tv');
+        let results = [];
+        const source = searchSourceSelect ? searchSourceSelect.value : 'tmdb';
+
+        if (source === 'tmdb') {
+            const data = await searchMulti(q);
+            results = data.results || [];
+            // Store valid results
+            currentSearchResults = results.filter(item => item.media_type === 'movie' || item.media_type === 'tv');
+        } else if (source.startsWith('addon:')) {
+            const addonId = source.replace('addon:', '');
+            const data = await searchAddon(addonId, q);
+            // Map addon results to common format if needed
+            currentSearchResults = (data.results || []).map(item => {
+                // Normalize type: 'series' -> 'tv'
+                let mediaType = item.type || item.media_type || 'movie';
+                if (mediaType === 'series') mediaType = 'tv';
+                
+                return {
+                    id: item.id, // Stremio ID (e.g. tt12345 or kitsu:123)
+                    title: item.name,
+                    name: item.name,
+                    poster_path: item.poster, // Full URL
+                    media_type: mediaType,
+                    release_date: item.releaseInfo || item.year, // rough approx
+                    vote_average: item.imdbRating ? parseFloat(item.imdbRating) : null,
+                    _addonId: addonId // Include addon ID for proper linking
+                };
+            });
+        }
         
         renderSearchResults();
 
     } catch (error) {
         console.error('Search failed:', error);
-        searchGrid.innerHTML = '<div class="col-span-full text-center text-red-500">Error loading results</div>';
+        searchGrid.innerHTML = `<div class="col-span-full text-center text-red-500">Error loading results: ${error.message}</div>`;
     }
   }
 };
@@ -387,6 +601,8 @@ const renderAddonsList = async () => {
         };
         installedAddonsList.appendChild(clone);
     });
+    // Update search sources whenever addon list is refreshed
+    updateSearchSources();
 };
 
 // Settings Logic
@@ -451,6 +667,7 @@ const initWelcomePopup = () => {
 document.addEventListener('DOMContentLoaded', () => {
     syncHomeElements();
     initHero();
+    updateSearchSources(); // Initial load of search sources
     initRows();
     initWelcomePopup();
     
@@ -510,3 +727,45 @@ document.addEventListener('DOMContentLoaded', () => {
     // Default to home section
     showSection('home');
 });
+
+// Update Listener
+if (window.electronAPI && window.electronAPI.onUpdateAvailable) {
+    window.electronAPI.onUpdateAvailable((info) => {
+        console.log('Update available:', info);
+        // Create modal
+        const modal = document.createElement('div');
+        modal.className = 'fixed inset-0 z-[9999] flex items-center justify-center bg-black/80 backdrop-blur-sm';
+        modal.innerHTML = `
+            <div class="bg-[#14141f] border border-purple-500/50 rounded-2xl p-8 max-w-md w-full mx-4 shadow-2xl transform scale-100 transition-transform duration-300">
+                <div class="w-16 h-16 bg-purple-500/20 rounded-full flex items-center justify-center mb-6 mx-auto">
+                    <svg class="w-8 h-8 text-purple-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                    </svg>
+                </div>
+                <h2 class="text-2xl font-bold text-white text-center mb-2">Update Available!</h2>
+                <p class="text-gray-400 text-center mb-6">Version <span class="text-white font-bold">${info.version}</span> is ready to download.</p>
+                <div class="flex flex-col gap-3">
+                    <button id="update-download-btn" class="w-full py-3 bg-purple-600 hover:bg-purple-500 text-white font-bold rounded-xl transition-all shadow-lg shadow-purple-500/20 flex items-center justify-center gap-2">
+                        <span>Download Now</span>
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/></svg>
+                    </button>
+                    <button id="update-later-btn" class="w-full py-2 text-gray-500 hover:text-gray-300 text-sm font-medium transition-colors">
+                        Remind Me Later
+                    </button>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(modal);
+        
+        document.getElementById('update-download-btn').onclick = () => {
+             if (window.electronAPI.openExternal) {
+                 window.electronAPI.openExternal(info.downloadUrl);
+             }
+             modal.remove();
+        };
+        
+        document.getElementById('update-later-btn').onclick = () => {
+            modal.remove();
+        };
+    });
+}

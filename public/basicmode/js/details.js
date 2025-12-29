@@ -6,7 +6,8 @@ import {
     getMovieImages,
     getTVShowImages,
     getEpisodeImages,
-    getExternalIds
+    getExternalIds,
+    findByExternalId
 } from './api.js';
 import { searchJackett, getJackettKey, setJackettKey, getJackettSettings } from './jackett.js';
 import { getInstalledAddons, installAddon, removeAddon, fetchAddonStreams, parseAddonStream } from './addons.js';
@@ -15,12 +16,16 @@ import { initDebridUI, getDebridSettings } from './debrid.js';
 const params = new URLSearchParams(window.location.search);
 const type = params.get('type');
 const id = params.get('id');
+const addonId = params.get('addonId');
+
+// Track both TMDB ID and IMDB ID separately for proper subtitle loading
+let currentTmdbId = null;
 
 if (!type || !id) {
     window.location.href = 'index.html';
 }
 
-const isTV = type === 'tv';
+const isTV = type === 'tv' || type === 'series';
 let currentDetails = null;
 let currentSeason = 1;
 let currentEpisode = null;
@@ -69,6 +74,7 @@ const saveSettingsBtn = document.getElementById('save-settings');
 const toggleConsoleBtn = document.getElementById('toggle-console-btn');
 const jackettApiInput = document.getElementById('jackett-api-input');
 const jackettUrlInput = document.getElementById('jackett-url-input');
+const defaultSortInput = document.getElementById('default-sort-input');
 const addonManifestInput = document.getElementById('addon-manifest-input');
 const installAddonBtn = document.getElementById('install-addon-btn');
 const installedAddonsList = document.getElementById('installed-addons-list');
@@ -167,10 +173,11 @@ const renderDetails = (data) => {
     if (data.genres && genresEl) {
         genresEl.innerHTML = '';
         data.genres.forEach(genre => {
-            const span = document.createElement('span');
-            span.className = 'px-3 py-1 bg-purple-600/20 text-purple-300 rounded-full text-sm border border-purple-500/30';
-            span.textContent = genre.name;
-            genresEl.appendChild(span);
+            const a = document.createElement('a');
+            a.className = 'px-3 py-1 bg-purple-600/20 text-purple-300 rounded-full text-sm border border-purple-500/30 hover:bg-purple-600 hover:text-white transition-colors cursor-pointer';
+            a.textContent = genre.name;
+            a.href = `grid.html?type=genre&id=${genre.id}&name=${encodeURIComponent(genre.name)}`;
+            genresEl.appendChild(a);
         });
     }
     const director = data.credits?.crew?.find(c => c.job === 'Director')?.name;
@@ -187,10 +194,11 @@ const renderDetails = (data) => {
     if (data.credits?.cast && castEl) {
         castEl.innerHTML = '';
         data.credits.cast.slice(0, 8).forEach(member => {
-            const span = document.createElement('span');
-            span.className = 'px-3 py-1.5 bg-gray-800/60 text-gray-300 rounded-full text-sm hover:bg-gray-700 transition-colors cursor-default';
-            span.textContent = member.name;
-            castEl.appendChild(span);
+            const a = document.createElement('a');
+            a.className = 'px-3 py-1.5 bg-gray-800/60 text-gray-300 rounded-full text-sm hover:bg-gray-700 hover:text-white transition-colors cursor-pointer';
+            a.textContent = member.name;
+            a.href = `grid.html?type=person&id=${member.id}&name=${encodeURIComponent(member.name)}`;
+            castEl.appendChild(a);
         });
     }
 };
@@ -371,7 +379,10 @@ const handleSortAndFilter = () => {
     displaySources(filtered);
 };
 
-sortSelect?.addEventListener('change', handleSortAndFilter);
+sortSelect?.addEventListener('change', () => {
+    localStorage.setItem('basic_default_sort', sortSelect.value);
+    handleSortAndFilter();
+});
 qualityFilter?.addEventListener('change', handleSortAndFilter);
 
 const matchEpisodeFile = (files, season, episode) => {
@@ -557,17 +568,26 @@ const displaySources = (sources) => {
             e.stopPropagation();
             if (link) {
                 let finalLink = link;
-                if (link.startsWith('http')) {
+                // Only resolve as torrent if it's a .torrent file URL
+                if (link.startsWith('http') && link.includes('.torrent')) {
                     const originalIcon = copyBtn.innerHTML;
                     copyBtn.innerHTML = '<div class="w-4 h-4 border-2 border-purple-500 border-t-transparent rounded-full animate-spin"></div>';
                     finalLink = await resolveTorrent(link, source.title);
                     copyBtn.innerHTML = originalIcon;
                 }
-                navigator.clipboard.writeText(finalLink).then(() => {
+                
+                const showSuccess = () => {
                     const originalIcon = copyBtn.innerHTML;
                     copyBtn.innerHTML = '<svg class="w-4 h-4 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" /></svg>';
                     setTimeout(() => copyBtn.innerHTML = originalIcon, 2000);
-                });
+                };
+
+                if (window.electronAPI?.copyToClipboard) {
+                    await window.electronAPI.copyToClipboard(finalLink);
+                    showSuccess();
+                } else {
+                    navigator.clipboard.writeText(finalLink).then(showSuccess);
+                }
             }
         };
 
@@ -576,8 +596,77 @@ const displaySources = (sources) => {
         playBtn.onclick = async () => {
             if (!link) return;
 
+            // Check if this is a direct streaming URL (not a magnet or torrent file)
+            const isDirectUrl = link.startsWith('http') && !link.includes('.torrent') && !link.startsWith('magnet:');
+            const isMagnet = link.startsWith('magnet:');
+            
+            // For direct URLs from addons like Nuvio, play directly through transcoder
+            if (isDirectUrl && !isMagnet) {
+                console.log(`[Direct Stream] Playing direct URL: ${link.substring(0, 80)}...`);
+                
+                // Get provider info for Next Episode feature
+                let providerUrl = '';
+                if (currentProvider !== 'jackett') {
+                    try {
+                        const addons = await getInstalledAddons();
+                        const addon = addons.find(a => (a.manifest?.id || a.id) === currentProvider);
+                        if (addon) {
+                            providerUrl = addon.url || addon.manifestUrl || '';
+                            if (providerUrl.endsWith('/manifest.json')) {
+                                providerUrl = providerUrl.replace('/manifest.json', '');
+                            }
+                        }
+                    } catch (e) {}
+                }
+                
+                // Save provider info
+                try {
+                    localStorage.setItem('basicmode_last_provider', JSON.stringify({
+                        provider: currentProvider,
+                        quality: source.quality,
+                        showName: currentDetails?.name || currentDetails?.title || ''
+                    }));
+                } catch (e) {}
+                
+                // Extract target season/episode
+                let targetS = currentSeason;
+                let targetE = currentEpisode;
+                const sourcesTitle = document.getElementById('sources-title');
+                if (sourcesTitle && isTV) {
+                    const titleText = sourcesTitle.innerText;
+                    const match = titleText.match(/S(\d+)E(\d+)/i);
+                    if (match) {
+                        targetS = parseInt(match[1]);
+                        targetE = parseInt(match[2]);
+                    }
+                }
+                
+                // Launch player with direct URL
+                if (window.electronAPI?.spawnMpvjsPlayer) {
+                    window.electronAPI.spawnMpvjsPlayer({
+                        url: link,
+                        tmdbId: currentTmdbId || id,
+                        imdbId: currentImdbId,
+                        seasonNum: targetS,
+                        episodeNum: targetE,
+                        type: type,
+                        isDebrid: false,  // Not debrid, direct stream
+                        isBasicMode: true,
+                        showName: currentDetails?.name || currentDetails?.title || '',
+                        provider: currentProvider,
+                        providerUrl: providerUrl,
+                        quality: source.quality
+                    });
+                } else {
+                    // Fallback: open in new tab
+                    window.open(link, '_blank');
+                }
+                return;
+            }
+
+            // For torrent files or magnets, continue with existing logic
             let activeLink = link;
-            if (link.startsWith('http')) {
+            if (link.startsWith('http') && link.includes('.torrent')) {
                 const originalContent = playBtn.innerHTML;
                 playBtn.innerHTML = '<div class="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>';
                 playBtn.disabled = true;
@@ -602,6 +691,30 @@ const displaySources = (sources) => {
                     console.log(`[UI-MATCH] Found target from UI: S${targetS}E${targetE}`);
                 }
             }
+
+            // Save provider info for Next Episode feature
+            // Get addon URL if using a Stremio addon
+            let providerUrl = '';
+            if (currentProvider !== 'jackett') {
+                try {
+                    const addons = await getInstalledAddons();
+                    const addon = addons.find(a => (a.manifest?.id || a.id) === currentProvider);
+                    if (addon) {
+                        providerUrl = addon.url || addon.manifestUrl || '';
+                        if (providerUrl.endsWith('/manifest.json')) {
+                            providerUrl = providerUrl.replace('/manifest.json', '');
+                        }
+                    }
+                } catch (e) {}
+            }
+            
+            try {
+                localStorage.setItem('basicmode_last_provider', JSON.stringify({
+                    provider: currentProvider,
+                    quality: source.quality,
+                    showName: currentDetails?.name || currentDetails?.title || ''
+                }));
+            } catch (e) {}
 
             if (debridSettings.useDebrid && debridSettings.debridAuth) {
                 console.log(`[Debrid] Preparing magnet: ${source.title}`);
@@ -660,19 +773,22 @@ const displaySources = (sources) => {
                                 const unresData = await unres.json();
                                 if (unresData.url) {
                                     console.log(`[FINAL STREAM LINK] ${unresData.url}`);
-                                    if (window.electronAPI?.spawnMpvjsPlayer) {
-                                        window.electronAPI.spawnMpvjsPlayer({
-                                            url: unresData.url,
-                                            tmdbId: id,
-                                            imdbId: currentImdbId,
-                                            seasonNum: targetS,
-                                            episodeNum: targetE,
-                                            type: type,
-                                            isDebrid: true,
-                                            isBasicMode: true
-                                        });
-                                    } else if (window.electronAPI?.openMPVDirect) {
-                                        window.electronAPI.openMPVDirect(unresData.url);
+                                                                if (window.electronAPI?.spawnMpvjsPlayer) {
+                                                                    window.electronAPI.spawnMpvjsPlayer({
+                                                                        url: unresData.url,
+                                                                        tmdbId: currentTmdbId || id,
+                                                                        imdbId: currentImdbId,
+                                                                        seasonNum: targetS,
+                                                                        episodeNum: targetE,
+                                                                        type: type,
+                                                                        isDebrid: true,
+                                                                        isBasicMode: true,
+                                                                        showName: currentDetails?.name || currentDetails?.title || '',
+                                                                        provider: currentProvider,
+                                                                        providerUrl: providerUrl,
+                                                                        quality: source.quality
+                                                                    });
+                                                                } else if (window.electronAPI?.openMPVDirect) {                                        window.electronAPI.openMPVDirect(unresData.url);
                                     } else {
                                         window.open(unresData.url, '_blank');
                                     }
@@ -733,13 +849,17 @@ const displaySources = (sources) => {
                             if (window.electronAPI?.spawnMpvjsPlayer) {
                                 window.electronAPI.spawnMpvjsPlayer({
                                     url: streamUrl,
-                                    tmdbId: id,
+                                    tmdbId: currentTmdbId || id,
                                     imdbId: currentImdbId,
                                     seasonNum: targetS,
                                     episodeNum: targetE,
                                     type: type,
                                     isDebrid: false,
-                                    isBasicMode: true
+                                    isBasicMode: true,
+                                    showName: currentDetails?.name || currentDetails?.title || '',
+                                    provider: currentProvider,
+                                    providerUrl: providerUrl,
+                                    quality: source.quality
                                 });
                             } else if (window.electronAPI?.openMPVDirect) {
                                 window.electronAPI.openMPVDirect(streamUrl);
@@ -805,12 +925,26 @@ const loadEpisodes = async (seasonNum) => {
 };
 
 const init = async () => {
+    // Load Default Sort Preference
+    if (sortSelect) {
+        const savedSort = localStorage.getItem('basic_default_sort');
+        if (savedSort) {
+            sortSelect.value = savedSort;
+        }
+    }
+
     // Settings Modal
     if (settingsBtn) {
         settingsBtn.onclick = async () => {
             jackettApiInput.value = await getJackettKey() || '';
             const settings = await getJackettSettings();
             if (jackettUrlInput) jackettUrlInput.value = settings.jackettUrl || '';
+            
+            // Load Default Sort
+            if (defaultSortInput) {
+                defaultSortInput.value = localStorage.getItem('basic_default_sort') || 'seeders';
+            }
+
             settingsModal.classList.remove('hidden');
             setTimeout(() => settingsModal.classList.remove('opacity-0'), 10);
         };
@@ -844,6 +978,15 @@ const init = async () => {
                 }
             }
 
+            // Save Default Sort
+            if (defaultSortInput) {
+                localStorage.setItem('basic_default_sort', defaultSortInput.value);
+                if (sortSelect) {
+                    sortSelect.value = defaultSortInput.value;
+                    handleSortAndFilter();
+                }
+            }
+
             settingsModal.classList.add('opacity-0');
             setTimeout(() => settingsModal.classList.add('hidden'), 300);
         };
@@ -857,49 +1000,220 @@ const init = async () => {
     }
 
     try {
-        const fetchFn = isTV ? getTVShowDetails : getMovieDetails;
-        const data = await fetchFn(id);
-        currentDetails = data;
-        
-        // Fetch IMDB ID once for global use
-        try {
-            const extIds = await getExternalIds(id, type);
-            currentImdbId = extIds.imdb_id;
-            console.log('[Details] Fetched IMDB ID:', currentImdbId);
-        } catch (e) {
-            console.warn('[Details] Failed to fetch external IDs:', e.message);
-        }
-
-        renderDetails(data);
-        loadScreenshots();
-        await renderAddonTabs();
-
-        if (isTV) {
-            seasonSection.classList.remove('hidden');
-            episodeSection.classList.remove('hidden');
-            const regularSeasons = data.seasons.filter(s => s.season_number > 0);
-            regularSeasons.forEach(season => {
-                const clone = seasonBtnTemplate.content.cloneNode(true);
-                const btn = clone.querySelector('.season-btn');
-                btn.textContent = `Season ${season.season_number}`;
-                btn.onclick = () => {
-                    document.querySelectorAll('.season-btn').forEach(b => b.classList.remove('bg-purple-600', 'text-white'));
-                    btn.classList.add('bg-purple-600', 'text-white');
-                    currentSeason = season.season_number;
-                    currentEpisode = null;
-                    sourcesList.classList.add('hidden');
-                    selectEpisodeMsg.classList.remove('hidden');
-                    loadEpisodes(currentSeason);
-                };
-                if (season.season_number === (regularSeasons[0]?.season_number || 1)) {
-                    btn.classList.add('bg-purple-600', 'text-white');
-                    currentSeason = season.season_number;
-                    loadEpisodes(currentSeason);
+        if (addonId) {
+            // Check if the ID is an IMDB ID - if so, try TMDB first for richer metadata
+            const isImdbId = id.startsWith('tt');
+            let tmdbId = null;
+            let tmdbType = isTV ? 'tv' : 'movie';
+            
+            if (isImdbId) {
+                try {
+                    console.log('[Details] ID is IMDB, looking up TMDB...');
+                    const findResult = await findByExternalId(id, 'imdb_id');
+                    
+                    // Check movie_results and tv_results
+                    if (findResult.movie_results && findResult.movie_results.length > 0) {
+                        tmdbId = findResult.movie_results[0].id;
+                        tmdbType = 'movie';
+                    } else if (findResult.tv_results && findResult.tv_results.length > 0) {
+                        tmdbId = findResult.tv_results[0].id;
+                        tmdbType = 'tv';
+                    }
+                    
+                    if (tmdbId) {
+                        console.log(`[Details] Found TMDB ID: ${tmdbId} (${tmdbType})`);
+                    }
+                } catch (e) {
+                    console.warn('[Details] TMDB lookup failed:', e.message);
                 }
-                seasonList.appendChild(clone);
-            });
+            }
+            
+            // If we found a TMDB ID, use TMDB for details
+            if (tmdbId) {
+                currentTmdbId = tmdbId; // Store the actual TMDB ID
+                const fetchFn = tmdbType === 'tv' ? getTVShowDetails : getMovieDetails;
+                const data = await fetchFn(tmdbId);
+                currentDetails = data;
+                currentImdbId = id; // We already have the IMDB ID
+                
+                renderDetails(data);
+                loadScreenshots();
+                await renderAddonTabs();
+
+                if (tmdbType === 'tv') {
+                    seasonSection.classList.remove('hidden');
+                    episodeSection.classList.remove('hidden');
+                    const regularSeasons = data.seasons.filter(s => s.season_number > 0);
+                    regularSeasons.forEach(season => {
+                        const clone = seasonBtnTemplate.content.cloneNode(true);
+                        const btn = clone.querySelector('.season-btn');
+                        btn.textContent = `Season ${season.season_number}`;
+                        btn.onclick = () => {
+                            document.querySelectorAll('.season-btn').forEach(b => b.classList.remove('bg-purple-600', 'text-white'));
+                            btn.classList.add('bg-purple-600', 'text-white');
+                            currentSeason = season.season_number;
+                            currentEpisode = null;
+                            sourcesList.classList.add('hidden');
+                            selectEpisodeMsg.classList.remove('hidden');
+                            loadEpisodes(currentSeason);
+                        };
+                        if (season.season_number === (regularSeasons[0]?.season_number || 1)) {
+                            btn.classList.add('bg-purple-600', 'text-white');
+                            currentSeason = season.season_number;
+                            loadEpisodes(currentSeason);
+                        }
+                        seasonList.appendChild(clone);
+                    });
+                } else {
+                    renderSources();
+                }
+            } else {
+                // Fallback to addon meta endpoint
+                const addons = await getInstalledAddons();
+                const addon = addons.find(a => a.manifest.id === addonId);
+                if (!addon) throw new Error('Addon not found');
+                
+                let url = addon.url.replace('/manifest.json', '');
+                if (url.endsWith('/')) url = url.slice(0, -1);
+                
+                const metaUrl = `${url}/meta/${type}/${id}.json`;
+                console.log('Fetching addon meta:', metaUrl);
+                const res = await fetch(metaUrl);
+                const data = await res.json();
+                
+                if (!data.meta) throw new Error('Metadata not found');
+                
+                currentDetails = data.meta;
+                currentDetails.title = currentDetails.name;
+                currentDetails.name = currentDetails.name;
+                currentDetails.poster_path = currentDetails.poster;
+                currentDetails.backdrop_path = currentDetails.background;
+                currentDetails.overview = currentDetails.description;
+                currentDetails.vote_average = currentDetails.imdbRating ? parseFloat(currentDetails.imdbRating) : null;
+                
+                if (currentDetails.runtime) {
+                     // Format usually "120 min" or similar
+                     currentDetails.runtime = parseInt(currentDetails.runtime);
+                }
+
+                if (currentDetails.cast) {
+                    currentDetails.credits = { cast: currentDetails.cast.map(c => ({ name: c, id: '' })) };
+                }
+
+                currentImdbId = currentDetails.imdb_id || (id.startsWith('tt') ? id : null);
+            
+                renderDetails(currentDetails);
+                await renderAddonTabs();
+                
+                if (isTV && currentDetails.videos) {
+                    seasonSection.classList.remove('hidden');
+                    episodeSection.classList.remove('hidden');
+                    
+                    const seasons = {};
+                    currentDetails.videos.forEach(v => {
+                        if (!seasons[v.season]) seasons[v.season] = [];
+                        seasons[v.season].push({
+                            episode_number: v.episode,
+                            name: v.title || `Episode ${v.episode}`,
+                            still_path: v.thumbnail,
+                            overview: v.overview,
+                            id: v.id
+                        });
+                    });
+                    
+                    Object.keys(seasons).sort((a,b) => a - b).forEach(sNum => {
+                        const clone = seasonBtnTemplate.content.cloneNode(true);
+                        const btn = clone.querySelector('.season-btn');
+                        btn.textContent = `Season ${sNum}`;
+                        btn.onclick = () => {
+                            document.querySelectorAll('.season-btn').forEach(b => b.classList.remove('bg-purple-600', 'text-white'));
+                            btn.classList.add('bg-purple-600', 'text-white');
+                            currentSeason = parseInt(sNum);
+                            currentEpisode = null;
+                            sourcesList.classList.add('hidden');
+                            selectEpisodeMsg.classList.remove('hidden');
+                            
+                            episodeGrid.innerHTML = '';
+                            episodesTitle.textContent = `Episodes (${seasons[sNum].length})`;
+                            seasons[sNum].sort((a,b) => a.episode_number - b.episode_number).forEach(ep => {
+                                const epClone = episodeCardTemplate.content.cloneNode(true);
+                                const epBtn = epClone.querySelector('.episode-btn');
+                                if (ep.still_path) {
+                                    const img = epClone.querySelector('.episode-img');
+                                    img.src = ep.still_path;
+                                    img.classList.remove('hidden');
+                                    epClone.querySelector('.episode-placeholder').classList.add('hidden');
+                                }
+                                epClone.querySelector('.episode-number').textContent = ep.episode_number;
+                                epClone.querySelector('.episode-name').textContent = ep.name;
+                                epBtn.onclick = () => {
+                                    document.querySelectorAll('.episode-btn').forEach(b => {
+                                        b.classList.remove('ring-2', 'ring-purple-500');
+                                        b.querySelector('.episode-overlay').classList.remove('opacity-100');
+                                    });
+                                    epBtn.classList.add('ring-2', 'ring-purple-500');
+                                    epBtn.querySelector('.episode-overlay').classList.add('opacity-100');
+                                    currentEpisode = ep.episode_number;
+                                    renderSources();
+                                };
+                                episodeGrid.appendChild(epClone);
+                            });
+                        };
+                        if (parseInt(sNum) === 1) {
+                             btn.click();
+                        }
+                        seasonList.appendChild(clone);
+                    });
+                } else {
+                    renderSources();
+                }
+            } // Close the else block for addon meta fallback
+
         } else {
-            renderSources();
+            currentTmdbId = id; // For non-addon items, id IS the TMDB ID
+            const fetchFn = isTV ? getTVShowDetails : getMovieDetails;
+            const data = await fetchFn(id);
+            currentDetails = data;
+            
+            try {
+                const extIds = await getExternalIds(id, type);
+                currentImdbId = extIds.imdb_id;
+                console.log('[Details] Fetched IMDB ID:', currentImdbId);
+            } catch (e) {
+                console.warn('[Details] Failed to fetch external IDs:', e.message);
+            }
+
+            renderDetails(data);
+            loadScreenshots();
+            await renderAddonTabs();
+
+            if (isTV) {
+                seasonSection.classList.remove('hidden');
+                episodeSection.classList.remove('hidden');
+                const regularSeasons = data.seasons.filter(s => s.season_number > 0);
+                regularSeasons.forEach(season => {
+                    const clone = seasonBtnTemplate.content.cloneNode(true);
+                    const btn = clone.querySelector('.season-btn');
+                    btn.textContent = `Season ${season.season_number}`;
+                    btn.onclick = () => {
+                        document.querySelectorAll('.season-btn').forEach(b => b.classList.remove('bg-purple-600', 'text-white'));
+                        btn.classList.add('bg-purple-600', 'text-white');
+                        currentSeason = season.season_number;
+                        currentEpisode = null;
+                        sourcesList.classList.add('hidden');
+                        selectEpisodeMsg.classList.remove('hidden');
+                        loadEpisodes(currentSeason);
+                    };
+                    if (season.season_number === (regularSeasons[0]?.season_number || 1)) {
+                        btn.classList.add('bg-purple-600', 'text-white');
+                        currentSeason = season.season_number;
+                        loadEpisodes(currentSeason);
+                    }
+                    seasonList.appendChild(clone);
+                });
+            } else {
+                renderSources();
+            }
         }
 
         loadingOverlay.classList.add('opacity-0');

@@ -49,6 +49,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
   openExternal: (url) => ipcRenderer.invoke("open-external", url),
   copyToClipboard: (text) => ipcRenderer.invoke("copy-to-clipboard", text),
   showFolderInExplorer: (folderPath) => ipcRenderer.invoke("show-folder-in-explorer", folderPath),
+  setSkipTorrentCleanup: (skip) => ipcRenderer.invoke("set-skip-torrent-cleanup", skip),
 
   // Books
   booksGetUrl: () => ipcRenderer.invoke("books-get-url"),

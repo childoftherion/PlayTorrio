@@ -8374,9 +8374,14 @@
         <i class="fas fa-play-circle"></i>
         <span>Play</span> Torrio
                     </a>
-        <div class="search-container">
-        <i class="fas fa-search search-icon"></i>
-        <input id="searchInput" placeholder="Search for movies, shows, anime..." type="text"/>
+        <div class="search-container" style="display:flex; align-items:center; gap:0.5rem;">
+            <select id="searchSourceSelect" class="modal-select" style="max-width: 120px; padding: 0.5rem; background: rgba(255,255,255,0.06); border-radius: 20px; border: 1px solid rgba(168, 85, 247, 0.3); height: 42px;">
+                <option value="tmdb">TMDB</option>
+            </select>
+            <div style="position:relative; flex:1;">
+                <i class="fas fa-search search-icon"></i>
+                <input id="searchInput" placeholder="Search for movies, shows, anime..." type="text"/>
+            </div>
         </div>
         <div class="user-actions">
         <!-- Connection Status (NEW UI only) -->
@@ -32500,30 +32505,44 @@ window.addEventListener("scroll", () => {
                 // When update becomes available, show persistent overlay and notification
                 window.electronAPI.onUpdateAvailable?.((_info) => {
                     console.log('[Update] Update available:', _info);
-                    
-                    // macOS: Show simple notification ONLY, don't show progress overlay or download anything
-                    if (_info?.manual || _info?.platform === 'darwin') {
-                        const downloadUrl = _info?.downloadUrl || 'https://github.com/ayman708-UX/PlayTorrio/releases/latest';
-                        showNotification(`🎉 Update ${_info?.version || ''} available! Please download the new DMG from GitHub.`, 'info', 10000);
-                        console.log('[Update] macOS: Manual download required. URL:', downloadUrl);
-                        // Do NOT show progress overlay on macOS
-                        return;
-                    }
-                    
-                    // Windows/Linux ONLY: Show progress overlay
-                    console.log('[Update] Showing download progress overlay');
-                    showOverlay();
-                    if (icon) { icon.className = 'fas fa-download'; icon.style.animation = 'pulse 1.5s ease-in-out infinite'; icon.style.color = '#a855f7'; }
-                    if (text) text.textContent = 'Update found! Download starting, please wait...';
-                    if (bar) bar.style.width = '0%';
-                    if (pct) pct.textContent = '0%';
-                    if (restartBtn) restartBtn.style.display = 'none';
-                    
-                    const warningText = document.getElementById('updateWarningText');
-                    if (warningText) warningText.textContent = '⚠️ Downloading update - please keep the app open';
-                    
-                    // Show persistent download notification that stays until completion
-                    showPersistentDownloadNotification(0);
+                    const downloadUrl = _info?.downloadUrl || 'https://github.com/ayman708-UX/PlayTorrio/releases/latest';
+                    const version = _info?.version || 'new';
+
+                    // Create manual update modal
+                    const modalId = 'manual-update-modal';
+                    if (document.getElementById(modalId)) return; // already showing
+
+                    const modal = document.createElement('div');
+                    modal.id = modalId;
+                    modal.className = 'modal active';
+                    modal.style.zIndex = '99999';
+                    modal.innerHTML = `
+                        <div class="modal-content" style="max-width: 450px; text-align: center; padding: 2rem;">
+                            <div style="width: 60px; height: 60px; background: rgba(168, 85, 247, 0.2); border-radius: 50%; display: flex; align-items: center; justify-content: center; margin: 0 auto 1.5rem auto;">
+                                <i class="fas fa-gift" style="font-size: 30px; color: #a855f7;"></i>
+                            </div>
+                            <h2 style="font-size: 1.8rem; margin-bottom: 0.5rem; color: #fff;">Update Available!</h2>
+                            <p style="color: #ccc; margin-bottom: 2rem;">Version <strong>${version}</strong> is ready to download.</p>
+                            
+                            <div style="display: flex; flex-direction: column; gap: 1rem;">
+                                <button id="manual-dl-btn" class="btn btn-primary" style="justify-content: center; padding: 1rem;">
+                                    <i class="fas fa-download"></i> Download Now
+                                </button>
+                                <button id="manual-later-btn" class="btn btn-ghost" style="justify-content: center; padding: 0.8rem;">
+                                    Remind Me Later
+                                </button>
+                            </div>
+                        </div>
+                    `;
+                    document.body.appendChild(modal);
+
+                    document.getElementById('manual-dl-btn').onclick = () => {
+                        window.electronAPI.openExternal(downloadUrl);
+                        modal.remove();
+                    };
+                    document.getElementById('manual-later-btn').onclick = () => {
+                        modal.remove();
+                    };
                 });
                 
                 // Progress updates - keep overlay visible throughout download
@@ -34199,6 +34218,29 @@ document.addEventListener('DOMContentLoaded', () => {
                 installedAddons = res.addons;
                 refreshProviderButtons();
                 updateSettingsList(); // Keep settings management
+
+                // Update Search Source Select
+                const select = document.getElementById('searchSourceSelect');
+                if (select) {
+                    const currentVal = select.value;
+                    select.innerHTML = '<option value="tmdb">TMDB</option>';
+                    installedAddons.forEach(addon => {
+                        const hasCatalog = addon.manifest.resources && (addon.manifest.resources.includes('catalog') || addon.manifest.resources.some(r => r.name === 'catalog'));
+                        if (hasCatalog) {
+                            const option = document.createElement('option');
+                            option.value = `addon:${addon.manifest.id}`;
+                            option.textContent = addon.manifest.name;
+                            select.appendChild(option);
+                        }
+                    });
+                    if (currentVal && select.querySelector(`option[value="${currentVal}"]`)) {
+                        select.value = currentVal;
+                    }
+                }
+
+                if (typeof renderAddonCatalogs === 'function') {
+                    renderAddonCatalogs();
+                }
             }
         } catch (e) { console.error('Failed to load addons', e); }
     };

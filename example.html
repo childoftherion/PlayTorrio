@@ -1,0 +1,941 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PlayTorrio Player</title>
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@1.4.12/dist/hls.min.js"></script>
+    <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
+    <style>
+        :root {
+            --primary-purple: #9d4edd;
+            --dark-purple: #5a189a;
+            --accent-purple: #c77dff;
+            --bg-dark: #0a001a;
+            --control-bg: rgba(10, 0, 20, 0.95);
+        }
+        body, html {
+            margin: 0; padding: 0; width: 100%; height: 100%;
+            background: #000; overflow: hidden;
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+            user-select: none; color: white;
+        }
+        body.hide-mouse { cursor: none; }
+        
+        #player-container {
+            position: relative; width: 100%; height: 100%;
+            background: #000; display: flex; align-items: center; justify-content: center;
+        }
+        video { width: 100%; height: 100%; object-fit: contain; }
+        
+        /* Draggable Area */
+        .top-bar {
+            position: absolute; top: 0; left: 0; right: 0;
+            padding: 25px 35px; display: flex; align-items: center; gap: 20px;
+            background: linear-gradient(to bottom, rgba(0,0,0,0.9), transparent);
+            z-index: 100; -webkit-app-region: drag;
+            opacity: 0; transition: opacity 0.4s ease;
+        }
+        #player-container.show-controls .top-bar { opacity: 1; }
+        .top-bar button, .top-bar span { -webkit-app-region: no-drag; }
+
+        #video-title {
+            font-size: 18px; font-weight: 600; color: var(--accent-purple);
+            text-shadow: 0 2px 4px rgba(0,0,0,0.8);
+            max-width: 70%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+        }
+
+        /* Subtitles Overlay */
+        #subtitle-overlay {
+            position: absolute; bottom: 130px; left: 0; width: 100%;
+            text-align: center; pointer-events: none; z-index: 50;
+            text-shadow: 0 0 10px rgba(0,0,0,1), 0 0 5px black;
+            color: #fff; font-weight: 600; font-size: 32px;
+            padding: 0 12%; box-sizing: border-box; line-height: 1.4;
+        }
+        
+        /* Controls Overlay */
+        #controls-overlay {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            display: flex; flex-direction: column; justify-content: flex-end;
+            opacity: 0; transition: opacity 0.4s ease; z-index: 90;
+            background: radial-gradient(circle, transparent 50%, rgba(0,0,0,0.4) 100%);
+        }
+        #player-container.show-controls #controls-overlay { opacity: 1; }
+
+        .bottom-bar {
+            padding: 20px 40px 45px 40px;
+            background: linear-gradient(to top, rgba(0,0,0,0.95), transparent);
+        }
+
+        /* Progress Bar */
+        .progress-wrapper { padding: 15px 0; cursor: pointer; position: relative; }
+        .progress-container {
+            width: 100%; height: 6px; background: rgba(255,255,255,0.15);
+            border-radius: 3px; position: relative; transition: height 0.1s;
+        }
+        .progress-wrapper:hover .progress-container { height: 10px; }
+        
+        .progress-bar {
+            height: 100%; background: var(--primary-purple); width: 0%;
+            border-radius: 3px; position: absolute; top: 0; left: 0; z-index: 3;
+            box-shadow: 0 0 15px var(--primary-purple);
+        }
+        .progress-buffer {
+            position: absolute; top: 0; left: 0; height: 100%;
+            background: rgba(157, 78, 221, 0.4);
+            width: 0%; border-radius: 3px; z-index: 2;
+            transition: width 0.3s ease;
+        }
+        
+        /* Hover Time Tooltip */
+        #seek-tooltip {
+            position: absolute; bottom: 35px; left: 0;
+            transform: translateX(-50%); background: var(--primary-purple);
+            color: white; padding: 4px 10px; border-radius: 6px;
+            font-size: 13px; font-weight: 700; pointer-events: none;
+            display: none; z-index: 100; box-shadow: 0 4px 10px rgba(0,0,0,0.5);
+        }
+
+        .controls-row { display: flex; justify-content: space-between; align-items: center; margin-top: 10px; }
+        .left-controls, .right-controls { display: flex; align-items: center; gap: 25px; }
+
+        .icon-btn {
+            background: none; border: none; color: white; cursor: pointer;
+            padding: 10px; border-radius: 50%; transition: all 0.2s;
+            display: flex; align-items: center; justify-content: center;
+        }
+        .icon-btn:hover { background: rgba(157, 78, 221, 0.25); color: var(--accent-purple); transform: scale(1.1); }
+        .material-icons { font-size: 38px; }
+
+        .volume-group {
+            display: flex; align-items: center; gap: 12px;
+            background: rgba(255,255,255,0.08); padding: 6px 18px;
+            border-radius: 30px; border: 1px solid rgba(157, 78, 221, 0.2);
+            width: fit-content;
+        }
+        #volume-slider {
+            width: 100px; height: 4px; -webkit-appearance: none;
+            background: rgba(255,255,255,0.2); border-radius: 2px; outline: none;
+        }
+        #volume-slider::-webkit-slider-thumb {
+            -webkit-appearance: none; width: 16px; height: 16px;
+            background: white; border-radius: 50%; box-shadow: 0 0 8px var(--primary-purple);
+        }
+
+        #time-display {
+            font-size: 16px; font-weight: 600; color: #ddd;
+            font-variant-numeric: tabular-nums; flex-shrink: 0;
+        }
+
+        /* Spinner */
+        .spinner {
+            width: 90px; height: 90px;
+            border: 7px solid rgba(157, 78, 221, 0.1);
+            border-top: 7px solid var(--primary-purple);
+            border-radius: 50%; animation: spin 1s linear infinite;
+            position: absolute; top: 50%; left: 50%;
+            transform: translate(-50%, -50%); z-index: 110; display: none;
+            filter: drop-shadow(0 0 15px var(--primary-purple));
+        }
+        @keyframes spin { 0% { transform: translate(-50%, -50%) rotate(0deg); } 100% { transform: translate(-50%, -50%) rotate(360deg); } }
+
+        /* Menus */
+        .menu-popup {
+            position: absolute; bottom: 120px; right: 40px;
+            background: var(--control-bg); border: 1px solid rgba(157, 78, 221, 0.4);
+            border-radius: 24px; width: 360px; max-height: 650px;
+            display: flex; flex-direction: column; z-index: 120;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.9);
+            backdrop-filter: blur(25px); opacity: 0; pointer-events: none;
+            transform: translateY(30px); transition: all 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
+        }
+        .menu-popup.visible { opacity: 1; pointer-events: auto; transform: translateY(0); }
+        .menu-header {
+            padding: 25px 30px; border-bottom: 1px solid rgba(255,255,255,0.1);
+            font-weight: 700; font-size: 22px; color: var(--accent-purple);
+            display: flex; justify-content: space-between; align-items: center;
+        }
+        .scrollable-list { flex: 1; overflow-y: auto; max-height: 350px; padding: 10px 15px; }
+        .scrollable-list::-webkit-scrollbar { width: 5px; }
+        .scrollable-list::-webkit-scrollbar-thumb { background: var(--primary-purple); border-radius: 10px; }
+
+        .list-item {
+            padding: 16px 22px; cursor: pointer; border-radius: 14px;
+            font-size: 17px; display: flex; align-items: center; gap: 18px;
+            transition: all 0.2s; margin-bottom: 6px;
+        }
+        .list-item:hover { background: rgba(157, 78, 221, 0.2); }
+        .list-item.active { background: var(--primary-purple); color: white; font-weight: 600; }
+        .sub-flag { width: 30px; height: 20px; border-radius: 5px; object-fit: cover; }
+
+        .menu-footer {
+            padding: 30px; border-top: 1px solid rgba(255,255,255,0.1);
+            background: rgba(0,0,0,0.3); border-radius: 0 0 24px 24px;
+            display: flex; flex-direction: column; gap: 22px;
+        }
+        .menu-option { display: flex; justify-content: space-between; align-items: center; font-size: 15px; font-weight: 500; color: #ccc; }
+        .menu-option input[type="range"] { flex: 1; margin-left: 25px; accent-color: var(--primary-purple); }
+        .menu-option input[type="number"] { 
+            background: rgba(0,0,0,0.5); border: 1px solid var(--primary-purple); 
+            color: white; border-radius: 10px; padding: 8px 14px; width: 70px; text-align: center;
+        }
+
+        #transcode-badge {
+            background: var(--primary-purple); color: white; font-size: 11px; padding: 3px 8px;
+            border-radius: 5px; font-weight: 900; margin-left: 12px;
+            vertical-align: middle; display: none; box-shadow: 0 0 10px var(--primary-purple);
+        }
+    </style>
+</head>
+<body>
+    <div id="player-container">
+        <div class="top-bar">
+            <button class="icon-btn" id="back-btn" title="Exit Player"><i class="material-icons">arrow_back</i></button>
+            <div id="video-title">Initializing...</div>
+            <span id="transcode-badge">TRANSCODING</span>
+        </div>
+
+        <video id="video-player" crossorigin="anonymous"></video>
+        
+        <div id="subtitle-overlay"></div>
+        <div id="loading-spinner" class="spinner"></div>
+
+        <div id="controls-overlay">
+            <div class="bottom-bar">
+                <div class="progress-wrapper" id="progress-wrapper">
+                    <div id="seek-tooltip">00:00</div>
+                    <div class="progress-container">
+                        <div class="progress-buffer" id="progress-buffer"></div>
+                        <div class="progress-bar" id="progress-bar"></div>
+                    </div>
+                </div>
+
+                <div class="controls-row">
+                    <div class="left-controls">
+                        <button class="icon-btn" id="play-pause-btn"><i class="material-icons">play_arrow</i></button>
+                        <div class="volume-group">
+                            <button class="icon-btn" id="mute-btn" style="padding:0;"><i class="material-icons" style="font-size:30px;">volume_up</i></button>
+                            <input type="range" id="volume-slider" min="0" max="1" step="0.05" value="1">
+                        </div>
+                        <span id="time-display">00:00 / 00:00</span>
+                    </div>
+
+                    <div class="right-controls">
+                        <button class="icon-btn" id="external-player-btn" title="External Player" style="display:none;"><i class="material-icons">link</i></button>
+                        <button class="icon-btn" id="audio-btn" title="Audio Tracks"><i class="material-icons">audiotrack</i></button>
+                        <button class="icon-btn" id="settings-btn" title="Quality Settings"><i class="material-icons">settings</i></button>
+                        <button class="icon-btn" id="subs-btn" title="Subtitles"><i class="material-icons">subtitles</i></button>
+                        <button class="icon-btn" id="fullscreen-btn" title="Fullscreen"><i class="material-icons">fullscreen</i></button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- External Player Menu -->
+        <div id="external-menu" class="menu-popup">
+            <div class="menu-header">
+                <span>EXTERNAL PLAYER</span>
+                <button class="icon-btn" id="close-external" style="padding:4px;"><i class="material-icons">close</i></button>
+            </div>
+            <div class="p-8 text-center" style="padding: 30px;">
+                <p class="text-sm text-gray-300 mb-6" style="margin-bottom: 20px; font-size: 14px; line-height: 1.5;">
+                    Copy the URL below to open this video in your preferred external player (VLC, MPV, etc.).
+                    <br><br>
+                    <span style="color: var(--primary-purple); font-weight: bold;">⚠️ IMPORTANT:</span> Please keep this player active for the stream to stay live.
+                </p>
+                <button id="copy-stream-url" class="list-item active" style="width: 100%; justify-content: center; border: none; outline: none;">
+                    <i class="material-icons" style="font-size: 20px;">content_copy</i>
+                    <span>Copy Stream URL</span>
+                </button>
+            </div>
+        </div>
+
+        <!-- Audio Menu -->
+        <div id="audio-menu" class="menu-popup">
+            <div class="menu-header">
+                <span>AUDIO TRACKS</span>
+                <button class="icon-btn" id="close-audio" style="padding:4px;"><i class="material-icons">close</i></button>
+            </div>
+            <div id="audio-list" class="scrollable-list">
+                <div style="padding:30px; text-align:center; color:#666;">Loading tracks...</div>
+            </div>
+        </div>
+
+        <!-- Settings Menu -->
+        <div id="settings-menu" class="menu-popup">
+            <div class="menu-header">
+                <span>QUALITY</span>
+                <button class="icon-btn" id="close-settings" style="padding:4px;"><i class="material-icons">close</i></button>
+            </div>
+            <div id="settings-list" class="scrollable-list">
+                <div class="list-item" data-quality="native" onclick="changeQuality('native', this)">Native (Source) - Original Quality</div>
+                <div class="list-item" data-quality="high" onclick="changeQuality('high', this)">High (1080p) - Best Quality</div>
+                <div class="list-item active" data-quality="mid" onclick="changeQuality('mid', this)">Medium (720p) - Balanced</div>
+                <div class="list-item" data-quality="low" onclick="changeQuality('low', this)">Low (480p) - Fast</div>
+            </div>
+        </div>
+
+        <!-- Subtitle Menu -->
+        <div id="subs-menu" class="menu-popup">
+            <div class="menu-header">
+                <span>SUBTITLES</span>
+                <button class="icon-btn" id="close-subs" style="padding:4px;"><i class="material-icons">close</i></button>
+            </div>
+            <div id="subs-list" class="scrollable-list">
+                <div style="padding:30px; text-align:center; color:#666;">Searching...</div>
+            </div>
+            <div class="menu-footer">
+                <div class="menu-option">
+                    <label>Delay (s)</label>
+                    <input type="number" id="sub-delay" value="0" step="0.1">
+                </div>
+                <div class="menu-option">
+                    <label>Text Size</label>
+                    <input type="range" id="sub-size" min="16" max="80" value="32">
+                </div>
+                 <div class="menu-option">
+                    <label>Position</label>
+                    <input type="range" id="sub-pos" min="40" max="500" value="130">
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const { ipcRenderer } = require('electron');
+
+        const video = document.getElementById('video-player');
+        const overlay = document.getElementById('subtitle-overlay');
+        const container = document.getElementById('player-container');
+        const params = new URLSearchParams(window.location.search);
+        
+        const videoUrl = params.get('url');
+        const initialTime = parseFloat(params.get('t') || 0);
+        const tmdbId = params.get('tmdbId');
+        const imdbId = params.get('imdbId');
+        const season = params.get('season');
+        const episode = params.get('episode');
+        const type = params.get('type');
+        const isDebrid = params.get('isDebrid') === '1';
+        const isBasicMode = params.get('isBasicMode') === '1';
+
+        const titleEl = document.getElementById('video-title');
+        titleEl.textContent = (season && episode) ? `S${season}:E${episode}` : (type === 'movie' ? 'Movie' : 'Video');
+
+        // State
+        let isTranscoding = false; 
+        function updateTranscodeUI() {
+            const badge = document.getElementById('transcode-badge');
+            const settingsBtn = document.getElementById('settings-btn');
+            const externalBtn = document.getElementById('external-player-btn');
+            
+            settingsBtn.style.display = 'flex';
+            if (isBasicMode) {
+                externalBtn.style.display = 'flex';
+            } else {
+                externalBtn.style.display = 'none';
+            }
+
+            if (isTranscoding) {
+                badge.style.display = 'inline-block';
+            } else {
+                badge.style.display = 'none';
+            }
+        }
+        updateTranscodeUI();
+        let videoDuration = 0;
+        let subtitles = [];
+        let activeSub = null;
+        let subDelay = 0;
+        let subSize = 32;
+        let subPos = 130;
+        let activityTimeout;
+        let currentAudioTrack = 0;
+        let audioTracks = [];
+        let currentQuality = 'mid';
+        let retryCount = 0;
+        const MAX_RETRIES = 10;
+        let lastAbsoluteTime = 0;
+        let playbackStableTimer = null;
+
+        // --- Initialization ---
+        if (videoUrl) {
+            initPlayer(videoUrl, initialTime);
+        }
+        
+        if (tmdbId || imdbId) {
+            initSubtitles(tmdbId, imdbId, season, episode, type);
+        }
+
+        async function initPlayer(url, start) {
+            document.getElementById('loading-spinner').style.display = 'block';
+            lastAbsoluteTime = start || 0; 
+            
+            // Start streaming immediately - Always Transcode per user request
+            console.log('Player: Starting stream immediately (Always Transcoding)');
+            isTranscoding = true;
+            updateTranscodeUI();
+            loadTranscodedStream(url, start);
+
+            // Fetch metadata in background for UI details (audio tracks, duration)
+            try {
+                const metaRes = await fetch(`http://127.0.0.1:6987/api/transcode/metadata?url=${encodeURIComponent(url)}`);
+                if (metaRes.ok) {
+                    const metadata = await metaRes.json();
+                    if (metadata.duration) videoDuration = metadata.duration;
+                    if (metadata.audioTracks) {
+                        audioTracks = metadata.audioTracks;
+                        renderAudioTracks();
+                    }
+                }
+            } catch (e) {
+                console.error('Background metadata fetch failed:', e);
+            }
+        }
+
+        function fallbackToTranscoder(url, start) {
+            if (isTranscoding) return;
+            isTranscoding = true;
+            updateTranscodeUI();
+            loadTranscodedStream(url, start);
+        }
+
+        function loadTranscodedStream(url, start) {
+            console.log('Player: Loading Transcoded Stream from', start, 'Quality:', currentQuality);
+            // Ensure we use the global videoUrl variable if url is just a placeholder
+            const targetUrl = url || videoUrl;
+            // Ensure start is a valid number
+            const startTime = typeof start === 'number' ? start : lastAbsoluteTime;
+            
+            const streamUrl = `http://127.0.0.1:6987/api/transcode/stream?url=${encodeURIComponent(targetUrl)}&start=${startTime}&audioTrack=${currentAudioTrack}&quality=${currentQuality}`;
+            
+            document.getElementById('loading-spinner').style.display = 'block';
+            isTranscoding = true;
+            updateTranscodeUI();
+            
+            video.src = streamUrl;
+            video.load();
+            video.play().catch(e => {
+                console.warn('Transcoder play() promise rejected:', e);
+            });
+        }
+
+        // --- Audio Tracks ---
+        function renderAudioTracks() {
+            const list = document.getElementById('audio-list');
+            list.innerHTML = '';
+            
+            audioTracks.forEach(track => {
+                const el = document.createElement('div');
+                el.className = 'list-item' + (currentAudioTrack === track.id ? ' active' : '');
+                el.innerHTML = `<span>${track.title} (${track.language.toUpperCase()})</span>`;
+                el.onclick = () => {
+                    if (currentAudioTrack === track.id && isTranscoding) return;
+                    
+                    currentAudioTrack = track.id;
+                    document.querySelectorAll('#audio-list .list-item').forEach(x => x.classList.remove('active'));
+                    el.classList.add('active');
+                    
+                    const currentTime = lastAbsoluteTime; // Use reliable tracked time
+                    isTranscoding = true;
+                    loadTranscodedStream(videoUrl, currentTime);
+                    document.getElementById('audio-menu').classList.remove('visible');
+                };
+                list.appendChild(el);
+            });
+        }
+
+        const audioBtn = document.getElementById('audio-btn');
+        const audioMenu = document.getElementById('audio-menu');
+        const closeAudio = document.getElementById('close-audio');
+        
+        // --- External Player Logic ---
+        const externalBtn = document.getElementById('external-player-btn');
+        const externalMenu = document.getElementById('external-menu');
+        const closeExternal = document.getElementById('close-external');
+        const copyUrlBtn = document.getElementById('copy-stream-url');
+
+        externalBtn.onclick = (e) => {
+            e.stopPropagation();
+            audioMenu.classList.remove('visible');
+            subsMenu.classList.remove('visible');
+            settingsMenu.classList.remove('visible');
+            externalMenu.classList.toggle('visible');
+        };
+        closeExternal.onclick = () => externalMenu.classList.remove('visible');
+
+        copyUrlBtn.onclick = () => {
+            const currentUrl = videoUrl;
+            if (currentUrl) {
+                navigator.clipboard.writeText(currentUrl).then(() => {
+                    const originalText = copyUrlBtn.querySelector('span').textContent;
+                    const originalIcon = copyUrlBtn.querySelector('i').textContent;
+                    
+                    copyUrlBtn.querySelector('span').textContent = 'Copied!';
+                    copyUrlBtn.querySelector('i').textContent = 'check';
+                    
+                    setTimeout(() => {
+                        copyUrlBtn.querySelector('span').textContent = originalText;
+                        copyUrlBtn.querySelector('i').textContent = originalIcon;
+                    }, 2000);
+                });
+            }
+        };
+
+        audioBtn.onclick = (e) => {
+            e.stopPropagation();
+            subsMenu.classList.remove('visible');
+            settingsMenu.classList.remove('visible');
+            externalMenu.classList.remove('visible');
+            audioMenu.classList.toggle('visible');
+        };
+        closeAudio.onclick = () => audioMenu.classList.remove('visible');
+
+        // --- Settings Menu ---
+        const settingsBtn = document.getElementById('settings-btn');
+        const settingsMenu = document.getElementById('settings-menu');
+        const closeSettings = document.getElementById('close-settings');
+        
+        settingsBtn.onclick = (e) => {
+            e.stopPropagation();
+            audioMenu.classList.remove('visible');
+            subsMenu.classList.remove('visible');
+            settingsMenu.classList.toggle('visible');
+        };
+        closeSettings.onclick = () => settingsMenu.classList.remove('visible');
+
+        window.changeQuality = (q, el) => {
+            if (currentQuality === q && isTranscoding) return;
+            currentQuality = q;
+            
+            document.querySelectorAll('#settings-list .list-item').forEach(x => x.classList.remove('active'));
+            if (el) el.classList.add('active');
+            
+            settingsMenu.classList.remove('visible');
+            
+            const currentTime = lastAbsoluteTime; // Use reliable tracked time
+            // Force transcoding switch
+            isTranscoding = true;
+            loadTranscodedStream(videoUrl, currentTime);
+        };
+
+        // --- Controls ---
+        const playBtn = document.getElementById('play-pause-btn');
+        const playIcon = playBtn.querySelector('i');
+        
+        function togglePlay() {
+            if (video.paused) video.play();
+            else video.pause();
+        }
+        playBtn.onclick = togglePlay;
+        video.onclick = (e) => { if (e.target.id === 'video-player') togglePlay(); };
+
+        video.onplay = () => { playIcon.textContent = 'pause'; document.getElementById('loading-spinner').style.display = 'none'; };
+        video.onpause = () => { playIcon.textContent = 'play_arrow'; };
+        video.onwaiting = () => { document.getElementById('loading-spinner').style.display = 'block'; };
+        
+        video.onplaying = () => { 
+            document.getElementById('loading-spinner').style.display = 'none';
+            // Only reset retry count if playback is stable for 10 seconds
+            if (playbackStableTimer) clearTimeout(playbackStableTimer);
+            playbackStableTimer = setTimeout(() => {
+                retryCount = 0;
+                console.log('Player: Playback stable, retry count reset');
+            }, 10000);
+        };
+
+        // Handle stream ending (normal or premature)
+        video.onended = () => {
+            const duration = (isTranscoding && videoDuration > 0) ? videoDuration : video.duration;
+            // If ended but we are far from the end (e.g., > 10 seconds remaining), treat as error/crash
+            if (duration && lastAbsoluteTime < (duration - 10)) {
+                console.warn(`Video ended prematurely at ${lastAbsoluteTime}s (duration: ${duration}s). Retrying...`);
+                handlePlaybackError({ code: 'PREMATURE_END', message: 'Stream ended early' });
+            } else {
+                console.log('Video ended normally.');
+            }
+        };
+
+        video.onerror = () => {
+            const err = video.error;
+            console.warn('Video error:', err);
+            handlePlaybackError(err);
+        };
+
+        function handlePlaybackError(err) {
+            if (!isTranscoding) {
+                console.warn('Video error occurred, falling back to transcoder');
+                fallbackToTranscoder(videoUrl, lastAbsoluteTime);
+            } else {
+                // Transcoder stream failed - Retry Logic
+                if (retryCount < MAX_RETRIES) {
+                    retryCount++;
+                    const resumeTime = lastAbsoluteTime;
+                    console.log(`Transcoder error (code ${err?.code}). Retrying (${retryCount}/${MAX_RETRIES}) from ${resumeTime}s...`);
+                    
+                    // Show spinner
+                    document.getElementById('loading-spinner').style.display = 'block';
+                    
+                    // Small delay to prevent tight loop and allow server cleanup
+                    setTimeout(() => {
+                        loadTranscodedStream(videoUrl, resumeTime);
+                    }, 1000);
+                } else {
+                    console.error('Max retries reached for transcoder.');
+                    document.getElementById('loading-spinner').style.display = 'none';
+                    // Optional: show UI message
+                }
+            }
+        }
+
+        // Progress & Seeking
+        const progressWrapper = document.getElementById('progress-wrapper');
+        const progressBar = document.getElementById('progress-bar');
+        const progressBuffer = document.getElementById('progress-buffer');
+        const timeDisplay = document.getElementById('time-display');
+        const seekTooltip = document.getElementById('seek-tooltip');
+
+        function getCurrentRealTime() {
+            if (!isTranscoding) return video.currentTime;
+            try {
+                const urlObj = new URL(video.src);
+                const offset = parseFloat(urlObj.searchParams.get('start') || 0);
+                return offset + video.currentTime;
+            } catch(e) { 
+                // Fallback for cases where src might be temporarily invalid during switch
+                return video.currentTime; 
+            }
+        }
+
+        video.ontimeupdate = () => {
+            const currentDuration = (isTranscoding && videoDuration > 0) ? videoDuration : video.duration;
+            const currentTime = getCurrentRealTime();
+            
+            // Track absolute time reliably for resume/recovery
+            if (currentTime > 0) lastAbsoluteTime = currentTime;
+            
+            const pct = (currentTime / currentDuration) * 100;
+            progressBar.style.width = `${pct || 0}%`;
+            timeDisplay.textContent = `${formatTime(currentTime)} / ${formatTime(currentDuration)}`;
+            updateSubtitles(currentTime);
+        };
+        
+        video.onprogress = () => {
+            const currentDuration = (isTranscoding && videoDuration > 0) ? videoDuration : video.duration;
+            if (video.buffered.length && currentDuration > 0) {
+                const end = video.buffered.end(video.buffered.length - 1);
+                const offset = isTranscoding ? parseFloat(new URL(video.src).searchParams.get('start') || 0) : 0;
+                const pct = ((end + offset) / currentDuration) * 100;
+                progressBuffer.style.width = `${Math.min(100, pct)}%`;
+            }
+        };
+
+        progressWrapper.onmousemove = (e) => {
+            const rect = progressWrapper.getBoundingClientRect();
+            const pos = (e.clientX - rect.left) / rect.width;
+            const currentDuration = (isTranscoding && videoDuration > 0) ? videoDuration : video.duration;
+            if (isFinite(currentDuration)) {
+                const hoverTime = pos * currentDuration;
+                seekTooltip.textContent = formatTime(hoverTime);
+                seekTooltip.style.left = `${e.clientX - rect.left}px`;
+                seekTooltip.style.display = 'block';
+            }
+        };
+        progressWrapper.onmouseleave = () => { seekTooltip.style.display = 'none'; };
+
+        progressWrapper.onclick = (e) => {
+            const rect = progressWrapper.getBoundingClientRect();
+            const pos = (e.clientX - rect.left) / rect.width;
+            const currentDuration = (isTranscoding && videoDuration > 0) ? videoDuration : video.duration;
+            if (isFinite(currentDuration)) {
+                const newTime = pos * currentDuration;
+                if (isTranscoding) loadTranscodedStream(videoUrl, newTime);
+                else video.currentTime = newTime;
+            }
+        };
+
+        // Volume
+        const muteBtn = document.getElementById('mute-btn');
+        const volSlider = document.getElementById('volume-slider');
+        muteBtn.onclick = () => { video.muted = !video.muted; updateVolIcon(); };
+        volSlider.oninput = (e) => { video.volume = e.target.value; video.muted = false; updateVolIcon(); };
+        function updateVolIcon() {
+            const i = muteBtn.querySelector('i');
+            if (video.muted || video.volume === 0) i.textContent = 'volume_off';
+            else if (video.volume < 0.5) i.textContent = 'volume_down';
+            else i.textContent = 'volume_up';
+        }
+
+        // Fullscreen
+        const fsBtn = document.getElementById('fullscreen-btn');
+        fsBtn.onclick = () => {
+            if (!document.fullscreenElement) { container.requestFullscreen(); fsBtn.querySelector('i').textContent = 'fullscreen_exit'; } 
+            else { document.exitFullscreen(); fsBtn.querySelector('i').textContent = 'fullscreen'; }
+        };
+
+        // Back Button
+        document.getElementById('back-btn').onclick = () => { window.close(); };
+
+        // Mouse Hiding
+        function showControls() {
+            container.classList.add('show-controls');
+            document.body.classList.remove('hide-mouse');
+            clearTimeout(activityTimeout);
+            activityTimeout = setTimeout(() => {
+                if (!video.paused && !subsMenu.classList.contains('visible') && !audioMenu.classList.contains('visible') && !settingsMenu.classList.contains('visible')) {
+                    container.classList.remove('show-controls');
+                    document.body.classList.add('hide-mouse');
+                }
+            }, 3000);
+        }
+        container.onmousemove = showControls;
+        container.onclick = showControls;
+
+        // --- Subtitles ---
+        const subsBtn = document.getElementById('subs-btn');
+        const subsMenu = document.getElementById('subs-menu');
+        const closeSubs = document.getElementById('close-subs');
+        
+        subsBtn.onclick = (e) => {
+            e.stopPropagation();
+            audioMenu.classList.remove('visible');
+            settingsMenu.classList.remove('visible');
+            subsMenu.classList.toggle('visible');
+        };
+        closeSubs.onclick = () => subsMenu.classList.remove('visible');
+
+        document.getElementById('sub-delay').oninput = (e) => subDelay = parseFloat(e.target.value) || 0;
+        document.getElementById('sub-size').oninput = (e) => {
+            subSize = e.target.value; overlay.style.fontSize = subSize + 'px';
+        };
+        document.getElementById('sub-pos').oninput = (e) => {
+            subPos = e.target.value; overlay.style.bottom = subPos + 'px';
+        };
+
+        function parseSRT(text) {
+            const arr = [];
+            const blocks = text.trim().replace(/\r\n/g, '\n').split('\n\n');
+            blocks.forEach(block => {
+                const lines = block.split('\n');
+                if (lines.length >= 2) {
+                    let timeIdx = lines[0].includes('-->') ? 0 : 1;
+                    if (lines.length > timeIdx) {
+                        const match = lines[timeIdx].match(/(\d+):(\d+):(\d+)[,.](\d+)\s*-->\s*(\d+):(\d+):(\d+)[,.](\d+)/);
+                        if (match) {
+                            const start = parseInt(match[1])*3600 + parseInt(match[2])*60 + parseInt(match[3]) + parseInt(match[4])/1000;
+                            const end = parseInt(match[5])*3600 + parseInt(match[6])*60 + parseInt(match[7]) + parseInt(match[8])/1000;
+                            const textLines = lines.slice(timeIdx + 1).join('\n');
+                            arr.push({ start, end, text: textLines });
+                        }
+                    }
+                }
+            });
+            return arr;
+        }
+
+        function updateSubtitles(time) {
+            const t = time + subDelay;
+            const sub = subtitles.find(s => t >= s.start && t <= s.end);
+            if (sub) {
+                if (activeSub !== sub) {
+                    overlay.innerHTML = sub.text.replace(/\n/g, '<br>');
+                    activeSub = sub;
+                }
+            } else if (activeSub) {
+                overlay.innerHTML = '';
+                activeSub = null;
+            }
+        }
+
+        async function initSubtitles(tmdbId, imdbId, season, episode, type) {
+            const list = document.getElementById('subs-list');
+            list.innerHTML = '<div style="padding:20px; text-align:center; color:#666;">Searching subtitles...</div>';
+            
+            // Standard "None" option
+            const noneItem = document.createElement('div');
+            noneItem.className = 'list-item';
+            noneItem.innerHTML = '<span>None</span>';
+            noneItem.onclick = () => {
+                subtitles = []; overlay.innerHTML = '';
+                document.querySelectorAll('#subs-list .list-item').forEach(el => el.classList.remove('active'));
+                noneItem.classList.add('active'); subsMenu.classList.remove('visible');
+            };
+
+            const allItems = [noneItem];
+
+            // 1. Fetch Wyzie
+            try {
+                let wyzieUrl = `https://sub.wyzie.ru/search?id=${tmdbId}`;
+                if (season && episode) wyzieUrl += `&season=${season}&episode=${episode}`;
+                
+                const res = await fetch(wyzieUrl);
+                const wyzieData = await res.json();
+                
+                if (wyzieData && wyzieData.length > 0) {
+                    const sep = document.createElement('div');
+                    sep.style.padding = '10px 15px';
+                    sep.style.fontSize = '12px';
+                    sep.style.color = 'var(--accent-purple)';
+                    sep.style.fontWeight = 'bold';
+                    sep.style.textTransform = 'uppercase';
+                    sep.style.letterSpacing = '1px';
+                    sep.innerText = 'Wyzie Subtitles';
+                    allItems.push(sep);
+
+                    wyzieData.forEach(sub => {
+                        const el = document.createElement('div');
+                        el.className = 'list-item';
+                        el.innerHTML = `<img src="${sub.flagUrl || ''}" class="sub-flag" onerror="this.style.display='none'"><span>${sub.display}</span>`;
+                        el.onclick = async () => {
+                            document.querySelectorAll('#subs-list .list-item').forEach(x => x.classList.remove('active'));
+                            el.classList.add('active');
+                            try {
+                                const txtRes = await fetch(sub.url);
+                                const txt = await txtRes.text();
+                                subtitles = parseSRT(txt); subsMenu.classList.remove('visible');
+                            } catch(err) {}
+                        };
+                        allItems.push(el);
+                    });
+                }
+            } catch (e) { console.error('Wyzie fetch error', e); }
+
+            // 2. Fetch from Stremio Addons
+            try {
+                // Get addons from main process (reads addons.json)
+                const addons = await ipcRenderer.invoke('get-installed-addons');
+                
+                if (addons && Array.isArray(addons)) {
+                    for (const addon of addons) {
+                        // Check if it supports subtitles? The user just said "when a user places a subtitles addon"
+                        // We will try to fetch subtitles from it.
+                        if (!imdbId) continue; // Stremio addons need IMDB ID (mostly) or Kitsu/etc. We have IMDB.
+
+                        // addon.url contains the manifest URL based on user provided structure
+                        const manifestUrl = addon.url || addon.manifestUrl; 
+                        if (!manifestUrl) continue;
+
+                        const addonSubs = await fetchAddonSubtitles(manifestUrl, imdbId, season, episode, type);
+                        if (addonSubs && addonSubs.length > 0) {
+                            const sep = document.createElement('div');
+                            sep.style.padding = '10px 15px';
+                            sep.style.fontSize = '12px';
+                            sep.style.color = 'var(--accent-purple)';
+                            sep.style.fontWeight = 'bold';
+                            sep.style.textTransform = 'uppercase';
+                            sep.style.letterSpacing = '1px';
+                            // Use manifest name if available
+                            const addonName = (addon.manifest && addon.manifest.name) ? addon.manifest.name : 'Addon Subtitles';
+                            sep.innerText = addonName;
+                            allItems.push(sep);
+
+                            addonSubs.forEach(sub => {
+                                const el = document.createElement('div');
+                                el.className = 'list-item';
+                                // User request: "display the ar en not the title, just the lang or lang code"
+                                // Prefer short code if available (e.g. "ar"), else lang (e.g. "ara")
+                                const langLabel = (sub.lang_code || sub.lang || 'Unknown').toUpperCase();
+                                
+                                el.innerHTML = `<span>${langLabel}</span>`;
+                                
+                                // Add title/id as tooltip so user can still distinguish if needed (hover)
+                                if (sub.title || sub.id) {
+                                    el.title = sub.title || sub.id;
+                                }
+
+                                el.onclick = async () => {
+                                    document.querySelectorAll('#subs-list .list-item').forEach(x => x.classList.remove('active'));
+                                    el.classList.add('active');
+                                    try {
+                                        // Stremio subs can be url or externalUrl
+                                        const targetUrl = sub.url || sub.externalUrl;
+                                        if (targetUrl) {
+                                            const txtRes = await fetch(targetUrl);
+                                            const txt = await txtRes.text();
+                                            subtitles = parseSRT(txt); 
+                                            subsMenu.classList.remove('visible');
+                                        }
+                                    } catch(err) { console.error(err); }
+                                };
+                                allItems.push(el);
+                            });
+                        }
+                    }
+                }
+            } catch (e) { console.error('Addon fetch error', e); }
+
+            // Render
+            list.innerHTML = '';
+            if (allItems.length <= 1) {
+                list.innerHTML = '<div style="padding:20px; text-align:center; color:#666;">No subtitles found</div>';
+            } else {
+                allItems.forEach(item => list.appendChild(item));
+            }
+        }
+
+        async function fetchAddonSubtitles(manifestUrl, imdbId, season, episode, type) {
+            try {
+                // 1. Get Manifest to resolve ID prefix (usually not needed if we just assume standard /subtitles/resource/id.json)
+                // But properly we should read manifest resources. For now, assuming standard Stremio protocol.
+                // Protocol: [base]/subtitles/[type]/[id].json
+                // id for movies: tt1234567
+                // id for series: tt1234567:1:1
+                
+                // Clean manifest URL (remove manifest.json if present to get base)
+                let baseUrl = manifestUrl.replace('/manifest.json', '');
+                
+                // Construct ID
+                let resourceId = imdbId;
+                if (type !== 'movie' && season && episode) {
+                    resourceId = `${imdbId}:${season}:${episode}`;
+                }
+
+                const endpoint = `${baseUrl}/subtitles/${type}/${encodeURIComponent(resourceId)}.json`;
+                
+                const res = await fetch(endpoint);
+                if (!res.ok) return [];
+                const data = await res.json();
+                
+                return data.subtitles || [];
+            } catch (e) {
+                console.warn('Failed to fetch from addon:', manifestUrl, e);
+                return [];
+            }
+        }
+
+        function formatTime(s) {
+            if (!s || isNaN(s) || !isFinite(s)) return "00:00";
+            const m = Math.floor(s / 60);
+            const sec = Math.floor(s % 60);
+            const h = Math.floor(m / 60);
+            const mm = m % 60;
+            if (h > 0) return `${h}:${mm.toString().padStart(2,'0')}:${sec.toString().padStart(2,'0')}`;
+            return `${mm.toString().padStart(2,'0')}:${sec.toString().padStart(2,'0')}`;
+        }
+
+        window.addEventListener('keydown', (e) => {
+            showControls();
+            if (e.key === ' ' || e.key === 'k') togglePlay();
+            if (e.key === 'f') fsBtn.click();
+            if (e.key === 'ArrowRight') {
+                const currentDuration = (isTranscoding && videoDuration > 0) ? videoDuration : video.duration;
+                const currentTime = getCurrentRealTime();
+                const newTime = Math.min(currentDuration, currentTime + 10);
+                if (isTranscoding) loadTranscodedStream(videoUrl, newTime);
+                else video.currentTime = newTime;
+            }
+            if (e.key === 'ArrowLeft') {
+                const currentTime = getCurrentRealTime();
+                const newTime = Math.max(0, currentTime - 10);
+                if (isTranscoding) loadTranscodedStream(videoUrl, newTime);
+                else video.currentTime = newTime;
+            }
+            if (e.key === 'Escape') {
+                if (document.fullscreenElement) document.exitFullscreen();
+                else window.close();
+            }
+        });
+    </script>
+</body>
+</html>

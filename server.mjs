@@ -273,7 +273,7 @@ export function startServer(userDataPath, executablePath = null, ffmpegBin = nul
 
     // Proxy for Jackett (Added for Basic Mode)
     app.get('/api/jackett', async (req, res) => {
-        let { apikey, q, t } = req.query;
+        let { apikey, q, t, jackettUrl: customUrl } = req.query;
         
         // If apikey is masked (contains *) or missing, use the internal API_KEY
         if (!apikey || apikey.includes('*')) {
@@ -281,7 +281,11 @@ export function startServer(userDataPath, executablePath = null, ffmpegBin = nul
             apikey = API_KEY;
         }
 
-        const url = new URL(JACKETT_URL);
+        // Use custom URL if provided, otherwise use the configured JACKETT_URL
+        const baseUrl = customUrl || JACKETT_URL;
+        console.log(`[Jackett Proxy] Using URL: ${baseUrl}`);
+        
+        const url = new URL(baseUrl);
         if (apikey) url.searchParams.append('apikey', apikey);
         if (q) url.searchParams.append('q', q);
         if (t) url.searchParams.append('t', t);
@@ -345,6 +349,9 @@ export function startServer(userDataPath, executablePath = null, ffmpegBin = nul
     // Use passed-in binaries
     let resolvedFfmpegPath = ffmpegBin; 
     let resolvedFfprobePath = ffprobeBin;
+    let bestEncoder = 'libx264';
+    let encoderPreset = 'ultrafast';
+    let hwAccel = 'auto'; // Default to auto, will be set to strict 'cuda'/'d3d11va' etc if HW is confirmed
 
     if (!resolvedFfmpegPath) {
         console.error('[Transcoder] CRITICAL: No FFmpeg binary provided to startServer!');
@@ -352,6 +359,75 @@ export function startServer(userDataPath, executablePath = null, ffmpegBin = nul
 
     console.log(`[Transcoder] Active FFmpeg: ${resolvedFfmpegPath}`);
     console.log(`[Transcoder] Active FFprobe: ${resolvedFfprobePath}`);
+
+    // Detect best encoder on startup
+    const detectBestEncoder = async () => {
+        console.log('[Transcoder] Detecting hardware acceleration...');
+        
+        // Ordered by preference: NVENC > QSV > AMF > Software (skip MediaFoundation - unreliable)
+        const encoders = [
+            { name: 'h264_nvenc', type: 'cuda', desc: 'NVIDIA NVENC' },
+            { name: 'h264_qsv', type: 'qsv', desc: 'Intel QuickSync' },
+            { name: 'h264_amf', type: 'd3d11va', desc: 'AMD AMF' }
+            // Note: h264_mf (MediaFoundation) is skipped - it's unreliable and often slower than x264
+        ];
+
+        for (const enc of encoders) {
+            try {
+                // Test encode a small black frame to verify encoder works
+                const args = [
+                    '-hide_banner', '-loglevel', 'error',
+                    '-f', 'lavfi', '-i', 'color=c=black:s=128x128:d=0.1',
+                    '-c:v', enc.name,
+                    '-frames:v', '1',
+                    '-f', 'null', '-'
+                ];
+                
+                await new Promise((resolve, reject) => {
+                    const p = spawn(resolvedFfmpegPath, args);
+                    let stderr = '';
+                    p.stderr.on('data', d => stderr += d.toString());
+                    p.on('close', (code) => {
+                        if (code === 0) resolve();
+                        else reject(new Error(`Exit code ${code}: ${stderr}`));
+                    });
+                    p.on('error', reject);
+                    // Timeout after 10 seconds
+                    setTimeout(() => {
+                        p.kill('SIGKILL');
+                        reject(new Error('Timeout'));
+                    }, 10000);
+                });
+
+                console.log(`[Transcoder] ✅ Hardware acceleration enabled: ${enc.desc} (${enc.name})`);
+                bestEncoder = enc.name;
+                
+                // Set optimal presets for each encoder
+                if (enc.name.includes('nvenc')) {
+                    encoderPreset = 'p4'; // Balanced speed/quality
+                    hwAccel = 'cuda';
+                } else if (enc.name.includes('qsv')) {
+                    encoderPreset = 'faster';
+                    hwAccel = 'qsv';
+                } else if (enc.name.includes('amf')) {
+                    encoderPreset = 'speed';
+                    hwAccel = 'd3d11va';
+                }
+                return;
+            } catch (e) {
+                // Silent fail, try next encoder
+            }
+        }
+        
+        console.log('[Transcoder] ⚠️ No hardware acceleration found. Using CPU (libx264).');
+        console.log('[Transcoder] 💡 Tip: Install NVIDIA/AMD/Intel drivers for faster transcoding.');
+        bestEncoder = 'libx264';
+        encoderPreset = 'superfast';
+        hwAccel = 'auto';
+    };
+
+    // Run detection asynchronously
+    detectBestEncoder();
 
     const metadataCache = new Map();
     const activeProbes = new Map();
@@ -364,7 +440,7 @@ export function startServer(userDataPath, executablePath = null, ffmpegBin = nul
         
         // If there's already a probe running for this URL, wait for it
         if (activeProbes.has(normalizedUrl)) {
-            console.log(`[FFprobe] Awaiting active probe for: ${normalizedUrl.substring(0, 80)}...`);
+            // console.log(`[FFprobe] Awaiting active probe for: ${normalizedUrl.substring(0, 80)}...`);
             return activeProbes.get(normalizedUrl);
         }
 
@@ -384,8 +460,8 @@ export function startServer(userDataPath, executablePath = null, ffmpegBin = nul
                         '-reconnect', '1',
                         '-reconnect_streamed', '1',
                         '-reconnect_delay_max', '5',
-                        '-analyzeduration', '10000000', 
-                        '-probesize', '10000000'
+                        '-analyzeduration', '20000000', // Increased to 20M for robustness
+                        '-probesize', '20000000'
                     ];
 
                     // Only add TorBox Referer for TorBox links
@@ -395,7 +471,7 @@ export function startServer(userDataPath, executablePath = null, ffmpegBin = nul
 
                     args.push(targetUrl);
                     
-                    console.log(`[FFprobe] Spawning: ${resolvedFfprobePath} ${args.join(' ')}`);
+                    // console.log(`[FFprobe] Spawning: ${resolvedFfprobePath} ${args.join(' ')}`);
                     
                     const ffprobe = spawn(resolvedFfprobePath, args);
                     let stdout = '', stderr = '';
@@ -433,39 +509,35 @@ export function startServer(userDataPath, executablePath = null, ffmpegBin = nul
                             metadataCache.set(normalizedUrl, meta);
                             resolve(meta);
                         } catch (e) { 
-                            reject(new Error(`ffprobe JSON parse error: ${e.message} | Stdout: ${stdout.substring(0, 200)}`)); 
+                            reject(new Error(`ffprobe JSON parse error: ${e.message}`)); 
                         }
                     });
 
                     const timeout = setTimeout(() => { 
                         ffprobe.kill('SIGKILL'); 
                         reject(new Error('ffprobe timeout')); 
-                    }, 45000); // Increased timeout to 45s for slow servers
+                    }, 45000); 
 
                     ffprobe.on('close', () => clearTimeout(timeout));
                 });
 
                 // Retry logic for WebTorrent or slow starts
                 let lastError = null;
-                for (let i = 0; i < 25; i++) { // Increased retries to 25
+                for (let i = 0; i < 5; i++) { // Reduced retries to 5 to avoid long hangs
                     try {
                         const meta = await runProbe();
-                        console.log(`[FFprobe] Success after ${i+1} attempts`);
+                        // console.log(`[FFprobe] Success after ${i+1} attempts`);
                         return meta;
                     } catch (err) {
                         lastError = err;
                         const msg = err.message || '';
-                        // If 404, 403, timeout or Invalid Data, it means the stream is not ready yet
-                        if (msg.includes('404') || msg.includes('403') || msg.includes('Invalid data') || msg.includes('ffprobe failed') || msg.includes('timeout')) {
-                            console.log(`[FFprobe] Stream not ready (Attempt ${i+1}/25), waiting 3s... Error: ${msg.substring(0, 100)}`);
-                            await new Promise(r => setTimeout(r, 3000));
-                        } else {
-                            console.error('[FFprobe] Terminal error:', msg);
-                            throw err; // Terminal error
-                        }
+                        // Fast fail on certain errors
+                        if (msg.includes('404') || msg.includes('403')) throw err;
+
+                        // Wait before retry
+                        if (i < 4) await new Promise(r => setTimeout(r, 1500)); 
                     }
                 }
-                console.error(`[FFprobe] Failed after maximum retries. Last error: ${lastError.message}`);
                 throw lastError;
             } finally {
                 activeProbes.delete(normalizedUrl);
@@ -487,6 +559,30 @@ export function startServer(userDataPath, executablePath = null, ffmpegBin = nul
         }
     });
 
+    // Encoder status endpoint - shows current hardware acceleration status
+    app.get('/api/transcode/status', (req, res) => {
+        const isHW = bestEncoder !== 'libx264';
+        let encoderType = 'CPU (Software)';
+        if (bestEncoder.includes('nvenc')) encoderType = 'NVIDIA NVENC';
+        else if (bestEncoder.includes('qsv')) encoderType = 'Intel QuickSync';
+        else if (bestEncoder.includes('amf')) encoderType = 'AMD AMF';
+        else if (bestEncoder.includes('mf')) encoderType = 'Windows MediaFoundation';
+        
+        res.json({
+            encoder: bestEncoder,
+            encoderType,
+            preset: encoderPreset,
+            hwAccel: hwAccel,
+            isHardwareAccelerated: isHW,
+            capabilities: {
+                native: true,
+                high: true,  // 1080p
+                mid: true,   // 720p
+                low: true    // 480p
+            }
+        });
+    });
+
     app.get('/api/transcode/stream', async (req, res) => {
         const { url: videoUrl, start = 0, audioTrack = 0, quality = 'mid' } = req.query;
         if (!videoUrl) return res.status(400).send('Missing url');
@@ -494,15 +590,17 @@ export function startServer(userDataPath, executablePath = null, ffmpegBin = nul
         // Use 127.0.0.1 for internal requests
         const targetUrl = videoUrl.replace('localhost', '127.0.0.1');
 
-        console.log(`[Transcoder] Request: ${targetUrl} from ${start}s [Quality: ${quality}]`);
-        console.log(`[Transcoder] Using binary: ${resolvedFfmpegPath}`);
-
+        console.log(`[Transcoder] Request: ${start}s [Q: ${quality}] [Enc: ${bestEncoder}]`);
+        
         res.writeHead(200, {
             'Content-Type': 'video/mp4',
-            'Cache-Control': 'no-cache',
+            'Cache-Control': 'no-cache, no-store, must-revalidate',
+            'Pragma': 'no-cache',
+            'Expires': '0',
             'Connection': 'keep-alive',
             'Accept-Ranges': 'bytes',
-            'Transfer-Encoding': 'chunked'
+            'Transfer-Encoding': 'chunked',
+            'X-Content-Type-Options': 'nosniff'
         });
 
         // Trigger metadata fetch in background (don't await) if not already cached
@@ -512,89 +610,249 @@ export function startServer(userDataPath, executablePath = null, ffmpegBin = nul
             });
         }
 
-        // Quality Presets
-        let videoBitrate = '2500k';
-        let maxRate = '3000k';
-        let bufSize = '6000k';
-        let scaleFilter = 'scale=-2:720,fps=30';
-        let preset = 'ultrafast';
+        // HW Encoders often need slightly higher bitrate for same visual quality
+        const isHW = bestEncoder !== 'libx264';
+        const isNVENC = bestEncoder.includes('nvenc');
+        const isQSV = bestEncoder.includes('qsv');
+        const isAMF = bestEncoder.includes('amf');
+
+        // ============ OPTIMIZED QUALITY PROFILES ============
+        // Tuned for best quality-to-speed ratio per encoder type
+        let videoBitrate, maxRate, bufSize, scaleFilter, crf;
+        let preset = encoderPreset;
 
         switch (quality) {
             case 'native':
-                videoBitrate = '25000k'; // High bitrate for 4K/Original
-                maxRate = '30000k';
-                bufSize = '60000k';
-                scaleFilter = null; // No scaling, keep original resolution
-                preset = 'ultrafast';
+                // Native: Preserve original quality, minimal processing
+                videoBitrate = isHW ? '50000k' : '35000k';
+                maxRate = isHW ? '60000k' : '45000k';
+                bufSize = '80000k';
+                scaleFilter = null;
+                crf = isHW ? null : '18'; // CRF for software only
                 break;
-            case 'high':
-                videoBitrate = '5000k';
-                maxRate = '6000k';
-                bufSize = '12000k';
-                scaleFilter = 'scale=-2:1080,fps=30';
-                preset = 'superfast'; 
+            case 'high': // 1080p - High quality streaming
+                videoBitrate = isHW ? '10000k' : '8000k';
+                maxRate = isHW ? '14000k' : '10000k';
+                bufSize = '20000k';
+                scaleFilter = 'scale=-2:1080:flags=lanczos';
+                crf = isHW ? null : '20';
                 break;
-            case 'low':
-                videoBitrate = '1000k';
-                maxRate = '1500k';
-                bufSize = '3000k';
-                scaleFilter = 'scale=-2:480,fps=30';
-                preset = 'ultrafast';
+            case 'low': // 480p - Fast, low bandwidth
+                videoBitrate = '1500k';
+                maxRate = '2000k';
+                bufSize = '4000k';
+                scaleFilter = 'scale=-2:480:flags=fast_bilinear';
+                crf = isHW ? null : '26';
                 break;
-            case 'mid':
+            case 'mid': // 720p - Balanced (default)
             default:
-                videoBitrate = '2500k';
-                maxRate = '3000k';
-                bufSize = '6000k';
-                scaleFilter = 'scale=-2:720,fps=30';
-                preset = 'ultrafast';
+                videoBitrate = isHW ? '5000k' : '4000k';
+                maxRate = isHW ? '7000k' : '5500k';
+                bufSize = '10000k';
+                scaleFilter = 'scale=-2:720:flags=lanczos';
+                crf = isHW ? null : '22';
                 break;
         }
 
+        // ============ BUILD FFMPEG ARGUMENTS ============
         const args = [
+            '-hide_banner', '-loglevel', 'warning',
+            
+            // Input optimization
             '-user_agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            '-fflags', '+genpts+discardcorrupt+fastseek',
-            '-probesize', '10M',
-            '-analyzeduration', '10M',
+            '-fflags', '+genpts+discardcorrupt+fastseek+nobuffer',
+            '-flags', 'low_delay',
+            '-probesize', '32M',
+            '-analyzeduration', '32M',
+            
+            // Seek BEFORE input for faster startup (input seeking)
             '-ss', start.toString(),
-            '-i', targetUrl,
-            '-reconnect', '1', 
-            '-reconnect_streamed', '1', 
-            '-reconnect_on_network_error', '1',
-            '-reconnect_at_eof', '1',
-            '-reconnect_delay_max', '5',
-            '-map', '0:v:0',
-            '-map', `0:a:${audioTrack}`,
-            '-c:v', 'libx264', '-preset', preset, '-tune', 'zerolatency',
-            '-pix_fmt', 'yuv420p',
-            '-avoid_negative_ts', 'make_zero',
-            '-max_muxing_queue_size', '1024'
         ];
 
-        // ... lines omitted for context ...
+        // Hardware acceleration input decoding
+        if (isNVENC) {
+            args.push('-hwaccel', 'cuda', '-hwaccel_output_format', 'cuda');
+        } else if (isQSV) {
+            args.push('-hwaccel', 'qsv', '-hwaccel_output_format', 'qsv');
+        } else if (isAMF) {
+            args.push('-hwaccel', 'd3d11va');
+        } else {
+            args.push('-hwaccel', 'auto');
+        }
 
+        // Input with reconnection for network streams
         args.push(
-            '-b:v', videoBitrate, '-maxrate', maxRate, '-bufsize', bufSize,
-            '-c:a', 'aac', '-b:a', '128k', '-ac', '2', '-ar', '44100',
-            '-af', 'aresample=async=1:min_hard_comp=0.100000:first_pts=0',
-            '-movflags', 'frag_keyframe+empty_moov+default_base_moof+frag_discont+delay_moov',
-            '-frag_duration', '1000000',
-            '-vsync', '1',
-            '-f', 'mp4', '-'
+            '-reconnect', '1',
+            '-reconnect_streamed', '1',
+            '-reconnect_on_network_error', '1',
+            '-reconnect_at_eof', '1',
+            '-reconnect_delay_max', '3',
+            '-i', targetUrl,
+            
+            // Stream mapping
+            '-map', '0:v:0',
+            '-map', `0:a:${audioTrack}?`, // ? makes it optional
+            
+            // Video encoder
+            '-c:v', bestEncoder
         );
 
-        const ffmpeg = spawn(resolvedFfmpegPath, args);
+        // ============ ENCODER-SPECIFIC OPTIMIZATIONS ============
+        const isMF = bestEncoder.includes('mf');
+        
+        if (isNVENC) {
+            // NVIDIA NVENC - Optimized for low latency streaming
+            args.push(
+                '-preset', 'p4',           // p4 = balanced speed/quality
+                '-tune', 'ull',            // Ultra low latency
+                '-rc', 'vbr',              // Variable bitrate for quality
+                '-rc-lookahead', '8',      // Small lookahead for low latency
+                '-spatial-aq', '1',        // Spatial adaptive quantization
+                '-temporal-aq', '1',       // Temporal adaptive quantization
+                '-b_ref_mode', '0',        // Disable B-frame references for speed
+                '-zerolatency', '1',
+                '-delay', '0',
+                '-bf', '0'                 // No B-frames for lowest latency
+            );
+        } else if (isQSV) {
+            // Intel QuickSync
+            args.push(
+                '-preset', 'faster',
+                '-look_ahead', '0',
+                '-global_quality', '23',
+                '-bf', '0'
+            );
+        } else if (isAMF) {
+            // AMD AMF
+            args.push(
+                '-quality', 'speed',
+                '-rc', 'vbr_latency',
+                '-bf', '0'
+            );
+        } else if (isMF) {
+            // Windows MediaFoundation - minimal options, it's picky
+            args.push(
+                '-bf', '0'
+            );
+        } else {
+            // Software x264 - Optimized for speed
+            args.push(
+                '-preset', 'superfast',    // Good balance of speed/quality
+                '-tune', 'zerolatency',    // Minimize latency
+                '-profile:v', 'high',      // High profile for better compression
+                '-level', '4.1',           // Wide compatibility
+                '-bf', '0',                // No B-frames
+                '-refs', '1',              // Single reference frame
+                '-rc-lookahead', '0',      // No lookahead
+                '-sc_threshold', '0',      // Disable scene change detection
+                '-x264-params', 'nal-hrd=cbr:force-cfr=1:sliced-threads=1'
+            );
+            // Use CRF for quality-based encoding when available
+            if (crf) {
+                args.push('-crf', crf);
+            }
+        }
+
+        // ============ VIDEO FILTERS ============
+        const filters = [];
+        
+        // Scale filter with high-quality algorithm
+        if (scaleFilter) {
+            if (isNVENC) {
+                // Use CUDA scaling for NVENC
+                const heightMatch = scaleFilter.match(/:(\d+)/);
+                if (heightMatch) {
+                    filters.push(`scale_cuda=-2:${heightMatch[1]}:interp_algo=lanczos`);
+                }
+            } else {
+                filters.push(scaleFilter);
+            }
+        }
+        
+        // Frame rate and format
+        if (!isNVENC) {
+            filters.push('fps=fps=30:round=near');  // Smooth 30fps
+        }
+        filters.push('format=yuv420p');  // Universal compatibility
+
+        if (filters.length > 0) {
+            args.push('-vf', filters.join(','));
+        }
+
+        // ============ BITRATE CONTROL ============
+        args.push(
+            '-b:v', videoBitrate,
+            '-maxrate', maxRate,
+            '-bufsize', bufSize
+        );
+
+        // ============ AUDIO ENCODING ============
+        args.push(
+            '-c:a', 'aac',
+            '-b:a', '192k',              // Higher quality audio
+            '-ac', '2',                   // Stereo
+            '-ar', '48000',               // 48kHz sample rate
+            '-af', 'aresample=async=1:min_hard_comp=0.100000:first_pts=0,volume=1.0'
+        );
+
+        // ============ OUTPUT FORMAT ============
+        args.push(
+            // Fragmented MP4 for instant playback
+            '-movflags', 'frag_keyframe+empty_moov+default_base_moof+faststart+delay_moov',
+            '-frag_duration', '500000',   // 0.5s fragments for lower latency
+            '-min_frag_duration', '250000', // Minimum 0.25s
+            
+            // Keyframe interval for seeking
+            '-g', '30',                   // Keyframe every 1 second at 30fps
+            '-keyint_min', '15',          // Minimum keyframe interval
+            
+            // Force constant frame rate
+            '-vsync', 'cfr',
+            
+            // Output
+            '-f', 'mp4',
+            '-'
+        );
+
+        const ffmpeg = spawn(resolvedFfmpegPath, args, {
+            stdio: ['ignore', 'pipe', 'pipe']
+        });
+        
+        // Pipe output to response
         ffmpeg.stdout.pipe(res);
         
-        // Log errors from ffmpeg
+        // Log errors from ffmpeg (only real errors)
         ffmpeg.stderr.on('data', (data) => {
-            const msg = data.toString();
-            if (msg.toLowerCase().includes('error')) console.error('[FFmpeg]', msg.trim());
+            const msg = data.toString().trim();
+            // Filter out common non-critical messages
+            if (msg.includes('buffer underflow') || 
+                msg.includes('Past duration') ||
+                msg.includes('Discarding') ||
+                msg.includes('deprecated')) return;
+            if (msg.toLowerCase().includes('error') || msg.toLowerCase().includes('fatal')) {
+                console.error('[FFmpeg Error]', msg);
+            }
         });
 
+        // Handle client disconnect
         res.on('close', () => {
-            console.log('[Transcoder] Client disconnected, killing ffmpeg');
-            ffmpeg.kill('SIGKILL');
+            if (!ffmpeg.killed) {
+                ffmpeg.kill('SIGKILL');
+            }
+        });
+
+        // Handle ffmpeg process errors
+        ffmpeg.on('error', (err) => {
+            console.error('[FFmpeg Process Error]', err.message);
+            if (!res.writableEnded) {
+                res.end();
+            }
+        });
+
+        ffmpeg.on('exit', (code, signal) => {
+            if (code !== 0 && code !== null && signal !== 'SIGKILL') {
+                console.warn(`[FFmpeg] Exited with code ${code}, signal ${signal}`);
+            }
         });
     });
 
@@ -4611,6 +4869,38 @@ for (let i = 0; i < 10; i++) {
         };
 
     torrent.once('ready', () => handleReady(torrent));
+    });
+
+    // Get torrent info (files list) for an active torrent by hash
+    app.get('/api/torrent-info', (req, res) => {
+        const { hash } = req.query;
+        if (!hash) return res.status(400).json({ error: 'Missing hash parameter' });
+        
+        const infoHash = hash.toLowerCase();
+        const torrent = activeTorrents.get(infoHash);
+        
+        if (!torrent) {
+            return res.status(404).json({ error: 'Torrent not found', hash: infoHash });
+        }
+        
+        if (!torrent.ready) {
+            return res.status(202).json({ status: 'loading', message: 'Torrent metadata not ready yet' });
+        }
+        
+        const files = torrent.files.map((file, idx) => ({
+            index: idx,
+            name: file.name,
+            path: file.path,
+            size: file.length
+        }));
+        
+        res.json({
+            infoHash: torrent.infoHash,
+            name: torrent.name,
+            files: files,
+            totalSize: torrent.length,
+            numPeers: torrent.numPeers
+        });
     });
 
     app.get('/api/stream-file', (req, res) => {

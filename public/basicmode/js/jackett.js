@@ -55,11 +55,14 @@ const fetchFromJackett = async (query) => {
     
     if (!apiKey) return [];
 
-    // Use the proxy we added to server.mjs
+    // Use the proxy we added to server.mjs, passing the custom Jackett URL
     const url = new URL(`${window.location.origin}/api/jackett`);
     url.searchParams.append('apikey', apiKey);
     url.searchParams.append('t', 'search');
     url.searchParams.append('q', query);
+    url.searchParams.append('jackettUrl', jackettUrl);
+    
+    console.log(`[Jackett] Searching with URL: ${jackettUrl}`);
     
     try {
         const response = await fetch(url.toString());
