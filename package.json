@@ -1,6 +1,6 @@
 {
   "name": "playtorrio",
-  "version": "2.4.1",
+  "version": "2.4.2",
   "description": "Ayman's PlayTorrio an all in one media center",
   "author": {
     "name": "Ayman",
@@ -24,14 +24,11 @@
     "crypto-js": "^4.2.0",
     "discord-rpc": "^4.0.1",
     "electron-updater": "^6.6.2",
-    "epubjs": "^0.3.93",
     "express": "^4.21.2",
     "express-rate-limit": "^7.5.1",
     "fluent-ffmpeg": "^2.1.3",
     "got": "^14.4.7",
     "got-scraping": "^4.1.2",
-    "jszip": "^3.10.1",
-    "m3u8stream": "^0.8.6",
     "mdns-js": "^1.0.3",
     "mime-types": "^2.1.35",
     "multer": "^2.0.1",
@@ -39,9 +36,6 @@
     "node-fetch": "^3.3.2",
     "parse-torrent": "^9.0.3",
     "qs": "^6.14.0",
-    "uuid": "^13.0.0",
-    "webtorrent": "^2.8.5",
-    "torrent-stream": "^1.2.0",
     "xml2js": "^0.6.2"
   },
   "devDependencies": {
@@ -65,12 +59,19 @@
       "api.cjs",
       "chromecast.mjs",
       "torrent_filter.mjs",
+      "stremio_engine.mjs",
+      "stremio_routes.mjs",
+      "torrserver.mjs",
+      "torrserver_routes.mjs",
       "jackett_api_key.json",
+      "engine/**/*",
       "src/**/*",
       "public/**/*",
       "node_modules/**/*"
     ],
-    "asarUnpack": [],
+    "asarUnpack": [
+      "engine/**/*"
+    ],
     "extraResources": [],
     "win": {
       "icon": "build/icon.ico",

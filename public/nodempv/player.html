@@ -29,6 +29,19 @@
             display: flex; align-items: center; justify-content: center;
         }
         
+        /* Black loading overlay - covers screen until video starts */
+        #loading-overlay {
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: #000;
+            z-index: 105;
+            transition: opacity 0.4s ease;
+        }
+        #loading-overlay.hidden {
+            opacity: 0;
+            pointer-events: none;
+        }
+        
         /* Draggable Area */
         .top-bar {
             position: absolute; top: 0; left: 0; right: 0;
@@ -199,6 +212,9 @@
 </head>
 <body>
     <div id="player-container">
+        <!-- Black overlay until video loads -->
+        <div id="loading-overlay"></div>
+        
         <div class="top-bar">
             <button class="icon-btn" id="back-btn" title="Exit Player"><i class="material-icons">arrow_back</i></button>
             <div id="video-title">Initializing MPV...</div>

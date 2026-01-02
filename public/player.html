@@ -578,6 +578,8 @@
         let encoderInfo = null;
         let useRemux = false; // True if source has web-compatible codecs
         let sourceMetadata = null; // Cached metadata for current source
+        let hlsInstance = null; // HLS.js instance for torrent streams
+        let currentStreamUrl = null; // The actual URL being played (HLS or direct)
 
         // --- Initialization ---
         if (videoUrl) {
@@ -588,80 +590,178 @@
             initSubtitles(tmdbId, imdbId, season, episode, type);
         }
         
-        // Fetch encoder status for display
-        fetch('/api/transcode/status')
-            .then(r => r.json())
-            .then(data => {
-                encoderInfo = data;
-                console.log(`[Player] Encoder: ${data.encoderType} (${data.encoder}) on ${data.platform}`);
-                // Update transcode badge with encoder info
-                const badge = document.getElementById('transcode-badge');
-                if (badge && data.isHardwareAccelerated) {
-                    badge.textContent = data.encoderType.includes('NVIDIA') ? 'NVENC' : 
-                                       data.encoderType.includes('Intel') ? 'QSV' :
-                                       data.encoderType.includes('AMD') ? 'AMF' : 
-                                       data.encoderType.includes('Apple') ? 'VT' :
-                                       data.encoderType.includes('VAAPI') ? 'VAAPI' : 'HW';
-                    badge.title = `Hardware Accelerated: ${data.encoderType}`;
+        // Check if this is a torrent stream
+        function isTorrentStream(url) {
+            return url && url.includes('/api/stream-file');
+        }
+        
+        // Extract hash and file index from torrent stream URL
+        function parseTorrentUrl(url) {
+            if (!url) return null;
+            try {
+                const urlObj = new URL(url);
+                return {
+                    hash: urlObj.searchParams.get('hash'),
+                    file: urlObj.searchParams.get('file')
+                };
+            } catch (e) {
+                // Try manual parsing if URL constructor fails
+                const hashMatch = url.match(/hash=([a-fA-F0-9]+)/);
+                const fileMatch = url.match(/file=(\d+)/);
+                if (hashMatch && fileMatch) {
+                    return { hash: hashMatch[1], file: fileMatch[1] };
                 }
-            })
-            .catch(() => {});
+                return null;
+            }
+        }
 
         async function initPlayer(url, start) {
             document.getElementById('loading-spinner').style.display = 'block';
-            lastAbsoluteTime = start || 0; 
+            lastAbsoluteTime = start || 0;
             
-            console.log('Player: Starting stream immediately at 720p...');
+            console.log('Player init:', url);
             
-            // ============ INSTANT START - NO WAITING ============
-            // Start transcoding IMMEDIATELY at 720p - don't wait for metadata
+            // Check if torrent stream
+            if (isTorrentStream(url)) {
+                const info = parseTorrentUrl(url);
+                console.log('Torrent info:', info);
+                if (info && info.hash && info.file !== null) {
+                    loadStremioHLS(info.hash, info.file, start);
+                    return;
+                }
+            }
+            
+            // Debrid/direct URL - use FFmpeg
+            console.log('Using FFmpeg transcoder');
             isTranscoding = true;
-            useRemux = false;
-            currentQuality = 'mid'; // Start at 720p
+            currentQuality = 'mid';
             updateTranscodeUI();
             
-            // Update UI to show 720p is selected
             document.querySelectorAll('#settings-list .list-item').forEach(el => {
                 el.classList.remove('active');
                 if (el.dataset.quality === 'mid') el.classList.add('active');
             });
             
-            // Start streaming RIGHT NOW at 720p
             loadTranscodedStream(url, start);
             
-            // ============ AUTO-SWITCH TO NATIVE AFTER 3 SECONDS ============
             setTimeout(() => {
-                console.log('Player: Auto-switching to native quality...');
-                currentQuality = 'native';
-                
-                // Update UI to show native is selected
-                document.querySelectorAll('#settings-list .list-item').forEach(el => {
-                    el.classList.remove('active');
-                    if (el.dataset.quality === 'native') el.classList.add('active');
-                });
-                
-                // Switch to native quality
-                const currentTime = lastAbsoluteTime;
-                loadTranscodedStream(url, currentTime);
+                if (!isTorrentStream(videoUrl)) {
+                    currentQuality = 'native';
+                    document.querySelectorAll('#settings-list .list-item').forEach(el => {
+                        el.classList.remove('active');
+                        if (el.dataset.quality === 'native') el.classList.add('active');
+                    });
+                    loadTranscodedStream(videoUrl, lastAbsoluteTime);
+                }
             }, 3000);
             
-            // ============ BACKGROUND METADATA FETCH ============
             fetch(`http://127.0.0.1:6987/api/transcode/metadata?url=${encodeURIComponent(url)}`)
-                .then(async (metaRes) => {
-                    if (metaRes.ok) {
-                        sourceMetadata = await metaRes.json();
-                        console.log(`Player: Metadata received - ${sourceMetadata.videoCodec}, ${sourceMetadata.duration}s`);
-                        
+                .then(async (r) => {
+                    if (r.ok) {
+                        sourceMetadata = await r.json();
                         if (sourceMetadata.duration) videoDuration = sourceMetadata.duration;
                         if (sourceMetadata.audioTracks) {
                             audioTracks = sourceMetadata.audioTracks;
                             renderAudioTracks();
                         }
                     }
-                })
-                .catch(e => {
-                    console.warn('Background metadata fetch failed:', e.message);
-                });
+                }).catch(() => {});
+        }
+        
+        // ============ TORRENT STREAM HANDLING ============
+        
+        function loadStremioHLS(hash, fileIndex, startTime = 0) {
+            console.log(`Player: Loading torrent stream - ${hash.substring(0, 8)}/${fileIndex}`);
+            
+            // Use FFmpeg transcoder directly - handles all codecs properly
+            loadTranscodedTorrentStream(hash, fileIndex, startTime);
+        }
+        
+        // Fallback: Use FFmpeg transcoder for torrent streams
+        function loadTranscodedTorrentStream(hash, fileIndex, startTime = 0) {
+            console.log(`Player: Using FFmpeg transcoder for torrent - ${hash.substring(0, 8)}/${fileIndex}`);
+            
+            const streamUrl = `http://127.0.0.1:6987/api/stream-file?hash=${hash}&file=${fileIndex}`;
+            
+            isTranscoding = true;
+            currentQuality = 'mid';
+            updateTranscodeUI();
+            
+            document.getElementById('settings-btn').style.display = 'flex';
+            
+            document.querySelectorAll('#settings-list .list-item').forEach(el => {
+                el.classList.remove('active');
+                if (el.dataset.quality === 'mid') el.classList.add('active');
+            });
+            
+            loadTranscodedStream(streamUrl, startTime);
+            
+            // Fetch metadata with retry for torrent streams (may need time to buffer)
+            const fetchMetadataWithRetry = async (retries = 3, delay = 5000) => {
+                for (let i = 0; i < retries; i++) {
+                    try {
+                        const metaRes = await fetch(`http://127.0.0.1:6987/api/transcode/metadata?url=${encodeURIComponent(streamUrl)}`);
+                        if (metaRes.ok) {
+                            sourceMetadata = await metaRes.json();
+                            console.log(`Player: Metadata - ${sourceMetadata.videoCodec}, ${sourceMetadata.duration}s`);
+                            if (sourceMetadata.duration) videoDuration = sourceMetadata.duration;
+                            if (sourceMetadata.audioTracks) {
+                                audioTracks = sourceMetadata.audioTracks;
+                                renderAudioTracks();
+                            }
+                            return;
+                        }
+                    } catch (e) {
+                        console.warn(`Metadata fetch attempt ${i + 1} failed:`, e.message);
+                    }
+                    if (i < retries - 1) await new Promise(r => setTimeout(r, delay));
+                }
+            };
+            fetchMetadataWithRetry();
+        }
+        
+        // Direct torrent stream (no transcoding, only works for web-compatible formats)
+        let directStreamAttempted = false;
+        
+        function loadDirectTorrentStream(hash, fileIndex, startTime = 0) {
+            // Prevent infinite loop
+            if (directStreamAttempted) {
+                console.log('Player: Direct stream already attempted, giving up');
+                document.getElementById('loading-spinner').style.display = 'none';
+                return;
+            }
+            directStreamAttempted = true;
+            
+            console.log(`Player: Trying direct stream - ${hash.substring(0, 8)}/${fileIndex}`);
+            
+            const streamUrl = `http://127.0.0.1:6987/api/stream-file?hash=${hash}&file=${fileIndex}`;
+            currentStreamUrl = streamUrl;
+            
+            document.getElementById('loading-spinner').style.display = 'block';
+            
+            const badge = document.getElementById('transcode-badge');
+            if (badge) {
+                badge.textContent = 'DIRECT';
+                badge.title = 'Direct Stream';
+                badge.style.display = 'inline-block';
+            }
+            
+            video.pause();
+            video.removeAttribute('src');
+            if (hlsInstance) {
+                hlsInstance.destroy();
+                hlsInstance = null;
+            }
+            
+            isTranscoding = false;
+            video.src = streamUrl;
+            video.load();
+            
+            video.onloadeddata = () => {
+                document.getElementById('loading-spinner').style.display = 'none';
+                if (startTime > 0) video.currentTime = startTime;
+                video.play().catch(e => console.warn('Autoplay blocked:', e));
+            };
         }
 
         function fallbackToTranscoder(url, start) {
@@ -738,6 +838,7 @@
             // Add forceSoftware parameter if we've hit the fallback threshold
             const softwareParam = useSoftwareFallback ? '&forceSoftware=true' : '';
             const streamUrl = `http://127.0.0.1:6987/api/transcode/stream?url=${encodeURIComponent(targetUrl)}&start=${startTime}&audioTrack=${currentAudioTrack}&quality=${currentQuality}${softwareParam}`;
+            currentStreamUrl = streamUrl; // Track the actual URL being played
             
             document.getElementById('loading-spinner').style.display = 'block';
             isTranscoding = true;
@@ -826,9 +927,25 @@
         closeExternal.onclick = () => externalMenu.classList.remove('visible');
 
         copyUrlBtn.onclick = () => {
-            const currentUrl = videoUrl;
-            if (currentUrl) {
-                navigator.clipboard.writeText(currentUrl).then(() => {
+            // For external players (VLC, MPV), give them the direct stream URL
+            // They can handle any codec, no need for transcoding
+            let urlToCopy;
+            
+            if (isTorrentStream(videoUrl)) {
+                // For torrents, give the direct Stremio engine URL
+                const info = parseTorrentUrl(videoUrl);
+                if (info && info.hash) {
+                    urlToCopy = `http://127.0.0.1:11470/${info.hash}/${info.file}`;
+                } else {
+                    urlToCopy = videoUrl;
+                }
+            } else {
+                // For debrid/direct URLs, give the original URL
+                urlToCopy = videoUrl;
+            }
+            
+            if (urlToCopy) {
+                navigator.clipboard.writeText(urlToCopy).then(() => {
                     const originalText = copyUrlBtn.querySelector('span').textContent;
                     const originalIcon = copyUrlBtn.querySelector('i').textContent;
                     
@@ -880,8 +997,11 @@
                 useRemux = false;
             }
             
-            const currentTime = lastAbsoluteTime; // Use reliable tracked time
-            // Force transcoding switch
+            // Hide next episode button during quality change (will re-show when appropriate)
+            const nextEpBtn = document.getElementById('next-episode-btn');
+            if (nextEpBtn) nextEpBtn.style.display = 'none';
+            
+            const currentTime = lastAbsoluteTime;
             isTranscoding = true;
             loadSmartStream(videoUrl, currentTime);
         };
@@ -901,9 +1021,11 @@
         video.onpause = () => { playIcon.textContent = 'play_arrow'; };
         video.onwaiting = () => { document.getElementById('loading-spinner').style.display = 'block'; };
         
-        // Stall detection - if waiting for more than 15 seconds, retry
+        // Stall detection - longer timeout for torrents since they need to buffer
         let stallTimer = null;
         let lastBufferCheck = 0;
+        let stallCount = 0;
+        const MAX_STALLS = 3; // Only trigger error after multiple stalls
         
         video.onwaiting = () => { 
             document.getElementById('loading-spinner').style.display = 'block';
@@ -912,22 +1034,49 @@
             if (stallTimer) clearTimeout(stallTimer);
             lastBufferCheck = video.currentTime;
             
+            // Longer timeout for torrent streams (30s) vs regular streams (15s)
+            const stallTimeout = isTorrentStream(videoUrl) ? 30000 : 15000;
+            
             stallTimer = setTimeout(() => {
                 // Check if we're still stalled at the same position
                 if (Math.abs(video.currentTime - lastBufferCheck) < 0.5 && !video.paused) {
-                    console.warn('Player: Stall detected, attempting recovery...');
-                    handlePlaybackError({ code: 'STALL', message: 'Playback stalled' });
+                    stallCount++;
+                    console.warn(`Player: Stall detected (${stallCount}/${MAX_STALLS})`);
+                    
+                    // Only trigger error after multiple stalls
+                    if (stallCount >= MAX_STALLS) {
+                        stallCount = 0;
+                        handlePlaybackError({ code: 'STALL', message: 'Playback stalled' });
+                    } else {
+                        // Try to resume playback
+                        video.play().catch(() => {});
+                    }
                 }
-            }, 15000); // 15 second stall threshold
+            }, stallTimeout);
         };
         
         video.onplaying = () => { 
             document.getElementById('loading-spinner').style.display = 'none';
             
-            // Clear stall timer
+            // Clear stall timer and reset stall count
             if (stallTimer) {
                 clearTimeout(stallTimer);
                 stallTimer = null;
+            }
+            stallCount = 0;
+            
+            // Try to get duration from video element if we don't have it
+            // For transcoded streams, only accept durations > 60s (not fragments)
+            if (video.duration && isFinite(video.duration) && video.duration > 0) {
+                if (isTranscoding) {
+                    if (video.duration > 60 && (!videoDuration || videoDuration < 60)) {
+                        videoDuration = video.duration;
+                        console.log('Player: Got duration from video element:', videoDuration);
+                    }
+                } else if (!videoDuration) {
+                    videoDuration = video.duration;
+                    console.log('Player: Got duration from video element:', videoDuration);
+                }
             }
             
             // Only reset retry count if playback is stable for 10 seconds
@@ -945,6 +1094,25 @@
             if (stallTimer) {
                 clearTimeout(stallTimer);
                 stallTimer = null;
+            }
+        };
+        
+        // Get duration when video metadata loads
+        video.ondurationchange = () => {
+            if (video.duration && isFinite(video.duration) && video.duration > 0) {
+                // For transcoded streams, ignore very short durations (fragments)
+                // Only update if we don't have a duration yet OR the new one is significantly longer
+                if (isTranscoding) {
+                    // Only accept duration from video element if it's > 60s (not a fragment)
+                    // and we don't already have a better duration from metadata
+                    if (video.duration > 60 && (!videoDuration || videoDuration < 60)) {
+                        videoDuration = video.duration;
+                        console.log('Player: Duration updated from video:', videoDuration);
+                    }
+                } else if (!videoDuration || videoDuration === 0) {
+                    videoDuration = video.duration;
+                    console.log('Player: Duration updated:', videoDuration);
+                }
             }
         };
 
@@ -967,6 +1135,16 @@
         };
 
         function handlePlaybackError(err) {
+            // For torrent streams, try direct stream as last resort (only once)
+            if (isTorrentStream(videoUrl) && !directStreamAttempted) {
+                const torrentInfo = parseTorrentUrl(videoUrl);
+                if (torrentInfo && torrentInfo.hash) {
+                    console.warn('[Player] Transcoder error, trying direct stream');
+                    loadDirectTorrentStream(torrentInfo.hash, torrentInfo.file, lastAbsoluteTime);
+                    return;
+                }
+            }
+            
             if (!isTranscoding) {
                 console.warn('Video error occurred, falling back to transcoder');
                 fallbackToTranscoder(videoUrl, lastAbsoluteTime);
@@ -988,7 +1166,7 @@
                              encoderInfo.encoderType.includes('VAAPI') ? 'VAAPI' : 'HW') : 'CPU';
                         badge.title = encoderInfo?.isHardwareAccelerated ? 
                             `Hardware Accelerated: ${encoderInfo.encoderType}` : 'Software Encoding';
-                        badge.style.background = ''; // Reset to default
+                        badge.style.background = '';
                     }
                     
                     setTimeout(() => {
@@ -1003,34 +1181,29 @@
                     const resumeTime = lastAbsoluteTime;
                     
                     // Check if we should switch to software encoding
-                    // This helps users whose hardware encoder detection passes but actual encoding fails
                     if (!useSoftwareFallback && retryCount >= SOFTWARE_FALLBACK_THRESHOLD && encoderInfo?.isHardwareAccelerated) {
                         console.warn(`[Player] Hardware encoding failed ${SOFTWARE_FALLBACK_THRESHOLD} times, switching to software fallback...`);
                         useSoftwareFallback = true;
-                        retryCount = 0; // Reset retry count for software attempts
+                        retryCount = 0;
                         
-                        // Update UI to show software mode
                         const badge = document.getElementById('transcode-badge');
                         if (badge) {
                             badge.textContent = 'CPU';
                             badge.title = 'Software Encoding (Fallback)';
-                            badge.style.background = ''; // Reset to default
+                            badge.style.background = '';
                         }
                     }
                     
                     console.log(`Transcoder error (code ${err?.code}). Retrying (${retryCount}/${MAX_RETRIES}) from ${resumeTime}s...${useSoftwareFallback ? ' [SOFTWARE MODE]' : ''}`);
                     
-                    // Show spinner
                     document.getElementById('loading-spinner').style.display = 'block';
                     
-                    // Small delay to prevent tight loop and allow server cleanup
                     setTimeout(() => {
                         loadTranscodedStream(videoUrl, resumeTime);
                     }, 1000);
                 } else {
                     console.error('Max retries reached for transcoder.');
                     document.getElementById('loading-spinner').style.display = 'none';
-                    // Optional: show UI message
                 }
             }
         }
@@ -1483,27 +1656,7 @@
             if (now - lastBufferUpdate < BUFFER_UPDATE_INTERVAL) return;
             lastBufferUpdate = now;
             
-            const hash = extractTorrentHash(videoUrl);
-            const fileIndex = extractTorrentFileIndex(videoUrl);
-            const currentDuration = (isTranscoding && videoDuration > 0) ? videoDuration : video.duration;
-            const currentTime = getCurrentRealTime();
-            
-            if (!hash || fileIndex === null || !isFinite(currentDuration) || currentDuration <= 0) return;
-            
-            try {
-                await fetch('/api/stream-buffer-update', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        hash,
-                        fileIndex: parseInt(fileIndex),
-                        position: currentTime,
-                        duration: currentDuration
-                    })
-                });
-            } catch (e) {
-                // Silent fail - buffer updates are non-critical
-            }
+            // Buffer update functionality removed - endpoint doesn't exist
         }
         
         // Initialize next episode detection for Basic Mode TV shows
@@ -1613,17 +1766,23 @@
             return null;
         }
         
-        // Show next episode button when in last 5 minutes
+        // Show/hide next episode button based on remaining time (checks continuously)
         function checkShowNextEpisodeButton() {
-            if (!isBasicMode || type !== 'tv' || !nextEpisodeData || nextEpisodeShown) return;
+            if (!isBasicMode || type !== 'tv' || !nextEpisodeData) return;
             
             const currentDuration = (isTranscoding && videoDuration > 0) ? videoDuration : video.duration;
             const currentTime = getCurrentRealTime();
             const remainingTime = currentDuration - currentTime;
             
+            // Need valid duration (> 60s to avoid fragment durations)
+            if (!currentDuration || currentDuration < 60) return;
+            
             // Show button when 5 minutes (300 seconds) or less remaining
-            if (remainingTime <= 300 && remainingTime > 0 && currentDuration > 0) {
+            if (remainingTime <= 300 && remainingTime > 0) {
                 showNextEpisodeButton();
+            } else {
+                // Hide button if we rewound past the 5 minute mark
+                hideNextEpisodeButton();
             }
         }
         
@@ -1636,6 +1795,12 @@
             
             nextEpBtn.style.display = 'flex';
             debugLog('[NextEp] Button shown for S' + nextEpisodeData.season + 'E' + nextEpisodeData.episode);
+        }
+        
+        function hideNextEpisodeButton() {
+            if (!nextEpisodeShown) return;
+            nextEpisodeShown = false;
+            nextEpBtn.style.display = 'none';
         }
         
         // Handle next episode button click
@@ -1726,7 +1891,7 @@
             debugLog('[NextEp] Same torrent fast-path: loading new episode');
             debugLog('[NextEp] New stream URL: ' + newStreamUrl);
             
-            // CRITICAL: Update the global videoUrl so transcoder uses the new file
+            // CRITICAL: Update the global videoUrl so player uses the new file
             videoUrl = newStreamUrl;
             
             // Reset player state
@@ -1738,13 +1903,19 @@
             activeSub = null;
             overlay.innerHTML = '';
             retryCount = 0;
-            useSoftwareFallback = false; // Reset software fallback for new content
-            useRemux = false; // Will be re-evaluated after metadata fetch
+            useSoftwareFallback = false;
+            useRemux = false;
             sourceMetadata = null;
             lastAbsoluteTime = 0;
-            videoDuration = 0; // Reset duration, will be fetched from new file
+            videoDuration = 0;
             
-            // Update title (include show name if available)
+            // Cleanup old HLS instance
+            if (hlsInstance) {
+                hlsInstance.destroy();
+                hlsInstance = null;
+            }
+            
+            // Update title
             const currentShowName = nextEpisodeData.showName || showName;
             titleEl.textContent = currentShowName ? `${currentShowName} - S${nextSeason}:E${nextEp}` : `S${nextSeason}:E${nextEp}`;
             
@@ -1760,37 +1931,8 @@
             // Show loading spinner
             document.getElementById('loading-spinner').style.display = 'block';
             
-            // Fetch new metadata (duration, audio tracks) for the new file
-            try {
-                debugLog('[NextEp] Fetching metadata for new episode...');
-                const metaRes = await fetch(`http://127.0.0.1:6987/api/transcode/metadata?url=${encodeURIComponent(newStreamUrl)}`);
-                if (metaRes.ok) {
-                    sourceMetadata = await metaRes.json();
-                    if (sourceMetadata.duration) {
-                        videoDuration = sourceMetadata.duration;
-                        debugLog('[NextEp] New episode duration: ' + videoDuration);
-                    }
-                    if (sourceMetadata.audioTracks) {
-                        audioTracks = sourceMetadata.audioTracks;
-                        currentAudioTrack = 0; // Reset to first audio track
-                        renderAudioTracks();
-                    }
-                    // Check if we can use remux for the new episode
-                    if (sourceMetadata.canRemux) {
-                        debugLog('[NextEp] Web-compatible codecs - using REMUX');
-                        useRemux = true;
-                    } else {
-                        debugLog('[NextEp] Incompatible codecs - using transcode');
-                        useRemux = false;
-                    }
-                }
-            } catch (e) {
-                debugLog('[NextEp] Failed to fetch metadata: ' + e.message, 'error');
-                useRemux = false;
-            }
-            
-            // Load the new stream using smart loader
-            loadSmartStream(newStreamUrl, 0);
+            // Use Stremio HLS for torrent streams (FAST)
+            loadStremioHLS(currentTorrentHash, fileIndex, 0);
             
             // Fetch new subtitles
             if (tmdbId || imdbId) {

@@ -1188,6 +1188,7 @@ let mpvProcess = null;
 let mpvWindow = null;
 let mpvSocket = null;
 let mpvStatusInterval = null;
+let mpvWindowBoundsBeforeFullscreen = null; // Store bounds before fullscreen
 
 // Launch NodeMPV Player - MPV embedded in Electron window with transparent UI overlay
 function openInNodeMPVPlayer(win, streamUrl, startSeconds, metadata = {}) {
@@ -1249,6 +1250,9 @@ function openInNodeMPVPlayer(win, streamUrl, startSeconds, metadata = {}) {
                 clearInterval(mpvStatusInterval);
                 mpvStatusInterval = null;
             }
+            
+            // Reset fullscreen bounds
+            mpvWindowBoundsBeforeFullscreen = null;
             
             // Cleanup WebTorrent if needed
             if (metadata.isBasicMode && streamUrl && streamUrl.includes('/api/stream-file')) {
@@ -1381,12 +1385,16 @@ async function startMpvProcess(videoUrl) {
         windowsHide: true
     });
     
-    mpvProcess.stdout.on('data', (data) => {
-        console.log('[MPV stdout]', data.toString().trim());
-    });
+    // Suppress MPV stdout spam (status line updates)
+    mpvProcess.stdout.on('data', () => {});
     
+    // Only log actual errors from stderr, not status messages
     mpvProcess.stderr.on('data', (data) => {
-        console.log('[MPV stderr]', data.toString().trim());
+        const msg = data.toString().trim();
+        // Filter out status lines and only log real errors
+        if (msg && !msg.startsWith('AV:') && !msg.startsWith('A:') && !msg.startsWith('V:') && !msg.includes('Cache:')) {
+            console.log('[MPV]', msg);
+        }
     });
     
     mpvProcess.on('error', (err) => {
@@ -2776,11 +2784,12 @@ if (!gotLock) {
             console.warn(`[FFmpeg] Bundled binaries NOT found for ${process.platform}. Looked in: ${ffmpegCandidates.join(', ')}`);
         }
 
-        const { server, clearCache, cleanupWebTorrent, activeTorrents } = startServer(app.getPath('userData'), app.getPath('exe'), ffmpegBin, ffprobeBin);
+        const { server, clearCache, clearStremioCache, cleanup, activeTorrents } = startServer(app.getPath('userData'), app.getPath('exe'), ffmpegBin, ffprobeBin);
         httpServer = server;
         // Store clearCache function globally for cleanup on exit
         global.clearApiCache = clearCache;
-        global.cleanupWebTorrent = cleanupWebTorrent;
+        global.clearStremioCache = clearStremioCache;
+        global.cleanup = cleanup;
         global.activeTorrents = activeTorrents;
         console.log('✅ Main API server started on port 6987');
     } catch (e) {
@@ -3081,8 +3090,23 @@ ipcMain.handle('spawn-mpvjs-player', async (event, { url, tmdbId, imdbId, season
                 case 'toggle-fullscreen':
                     if (mpvWindow && !mpvWindow.isDestroyed()) {
                         const isFs = mpvWindow.isFullScreen();
-                        mpvWindow.setFullScreen(!isFs);
-                        sendMpvCommand(['set_property', 'fullscreen', !isFs ? 'yes' : 'no']);
+                        if (!isFs) {
+                            // Going fullscreen - save current bounds first
+                            mpvWindowBoundsBeforeFullscreen = mpvWindow.getBounds();
+                            mpvWindow.setFullScreen(true);
+                            sendMpvCommand(['set_property', 'fullscreen', 'yes']);
+                        } else {
+                            // Exiting fullscreen - restore original bounds
+                            mpvWindow.setFullScreen(false);
+                            sendMpvCommand(['set_property', 'fullscreen', 'no']);
+                            // Restore bounds after a short delay to ensure fullscreen exit completes
+                            setTimeout(() => {
+                                if (mpvWindow && !mpvWindow.isDestroyed() && mpvWindowBoundsBeforeFullscreen) {
+                                    mpvWindow.setBounds(mpvWindowBoundsBeforeFullscreen);
+                                    mpvWindow.center(); // Re-center in case display changed
+                                }
+                            }, 100);
+                        }
                     }
                     break;
                 case 'quit':
@@ -3380,9 +3404,19 @@ ipcMain.handle('spawn-mpvjs-player', async (event, { url, tmdbId, imdbId, season
                 }
             }
             
+            // Clear Stremio engine cache
+            if (global.clearStremioCache) {
+                try {
+                    const stremioResult = global.clearStremioCache();
+                    results.push(stremioResult);
+                } catch (error) {
+                    results.push({ success: false, message: 'Failed to clear Stremio cache: ' + error.message });
+                }
+            }
+            
             const success = results.every(r => r.success);
             const message = success
-                ? 'Cache cleared: webtorrent, downloaded subtitles, and API cache.'
+                ? 'Cache cleared: webtorrent, subtitles, API cache, and Stremio cache.'
                 : results.map(r => r.message).join(' | ');
             return { success, message };
     });
@@ -4172,16 +4206,16 @@ async function performGracefulShutdown() {
             }
         }
 
-        // --- WebTorrent cleanup (new) ---
-        console.log('[Shutdown] Cleaning up WebTorrent...');
-        if (global.cleanupWebTorrent) {
+        // --- TorrServer cleanup ---
+        console.log('[Shutdown] Cleaning up TorrServer...');
+        if (global.cleanup) {
             try { 
                 await Promise.race([
-                    global.cleanupWebTorrent(),
+                    global.cleanup(),
                     new Promise(resolve => setTimeout(resolve, 2000)) // 2s timeout
                 ]);
             } catch (error) {
-                console.error('[Shutdown] Error cleaning up WebTorrent:', error);
+                console.error('[Shutdown] Error cleaning up TorrServer:', error);
             }
         }
 

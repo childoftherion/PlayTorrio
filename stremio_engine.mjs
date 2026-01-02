@@ -1,0 +1,415 @@
+/**
+ * Stremio Torrent Engine Integration
+ * Uses the bundled Stremio server.js for FAST torrent streaming
+ */
+
+import { spawn } from 'child_process';
+import path from 'path';
+import fs from 'fs';
+import { fileURLToPath } from 'url';
+import fetch from 'node-fetch';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// Engine configuration
+const ENGINE_PORT = 11470;
+const ENGINE_URL = `http://127.0.0.1:${ENGINE_PORT}`;
+
+let engineProcess = null;
+let isReady = false;
+let cachePath = null;
+let ffmpegPath = null;
+let ffprobePath = null;
+
+// Track active torrents
+const activeTorrents = new Map();
+const torrentTimestamps = new Map();
+
+/**
+ * Get path to engine/server.cjs
+ * Handles both development and production (asar unpacked) paths
+ */
+function getEnginePath() {
+    // Try multiple possible locations
+    const possiblePaths = [
+        // Development / unpacked from asar
+        path.join(__dirname, 'engine', 'server.cjs'),
+        // Inside asar but unpacked
+        path.join(__dirname.replace('app.asar', 'app.asar.unpacked'), 'engine', 'server.cjs'),
+        // Electron resources path (if using extraResources)
+        path.join(process.resourcesPath || '', 'engine', 'server.cjs'),
+    ];
+    
+    for (const enginePath of possiblePaths) {
+        if (fs.existsSync(enginePath)) {
+            console.log(`[StremioEngine] Found engine at: ${enginePath}`);
+            return enginePath;
+        }
+    }
+    
+    console.error('[StremioEngine] Engine not found in any location:', possiblePaths);
+    return null;
+}
+
+/**
+ * Wait for engine to be ready
+ */
+async function waitForReady(maxAttempts = 60, delayMs = 500) {
+    for (let i = 0; i < maxAttempts; i++) {
+        try {
+            const response = await fetch(`${ENGINE_URL}/stats.json`, { timeout: 2000 });
+            if (response.ok) {
+                return true;
+            }
+        } catch (e) {
+            // Not ready yet
+        }
+        await new Promise(r => setTimeout(r, delayMs));
+    }
+    return false;
+}
+
+/**
+ * Start the Stremio engine
+ */
+export async function startEngine(userDataPath, ffmpegBin = null, ffprobeBin = null) {
+    if (isReady && engineProcess) {
+        return { success: true, url: ENGINE_URL };
+    }
+    
+    const enginePath = getEnginePath();
+    if (!enginePath) {
+        throw new Error('Stremio engine not found in /engine folder');
+    }
+    
+    // Store FFmpeg paths
+    ffmpegPath = ffmpegBin;
+    ffprobePath = ffprobeBin;
+    
+    // Set up cache path - engine will create stremio-cache subfolder
+    cachePath = userDataPath;
+    
+    console.log(`[StremioEngine] Starting from: ${enginePath}`);
+    console.log(`[StremioEngine] Data path: ${cachePath}`);
+    console.log(`[StremioEngine] FFmpeg: ${ffmpegPath || 'system'}`);
+    
+    // Build environment with FFmpeg paths
+    const engineEnv = {
+        ...process.env,
+        STREMIO_CACHE: cachePath,
+        ENGINE_PORT: String(ENGINE_PORT),
+        NO_CORS: '1',
+        APP_PATH: cachePath,
+        STREMIO_PATH: cachePath
+    };
+    
+    // Add FFmpeg paths if provided - use multiple env var names for compatibility
+    if (ffmpegPath) {
+        engineEnv.FFMPEG_BIN = ffmpegPath;
+        engineEnv.FFMPEG_PATH = ffmpegPath;
+        engineEnv.FFMPEG = ffmpegPath;
+    }
+    if (ffprobePath) {
+        engineEnv.FFPROBE_BIN = ffprobePath;
+        engineEnv.FFPROBE_PATH = ffprobePath;
+        engineEnv.FFPROBE = ffprobePath;
+    }
+    
+    // Start the engine process using spawn with node
+    engineProcess = spawn(process.execPath, [enginePath], {
+        env: engineEnv,
+        stdio: ['ignore', 'pipe', 'pipe'],
+        windowsHide: true
+    });
+    
+    engineProcess.stdout?.on('data', (data) => {
+        const msg = data.toString().trim();
+        if (msg && !msg.includes('DEBUG')) {
+            console.log(`[StremioEngine] ${msg}`);
+        }
+    });
+    
+    engineProcess.stderr?.on('data', (data) => {
+        const msg = data.toString().trim();
+        if (msg) {
+            console.error(`[StremioEngine] ${msg}`);
+        }
+    });
+    
+    engineProcess.on('error', (err) => {
+        console.error('[StremioEngine] Process error:', err.message);
+        isReady = false;
+    });
+    
+    engineProcess.on('exit', (code) => {
+        console.log(`[StremioEngine] Process exited with code ${code}`);
+        isReady = false;
+        engineProcess = null;
+    });
+    
+    // Wait for engine to be ready
+    console.log('[StremioEngine] Waiting for engine to start...');
+    const ready = await waitForReady(60, 500);
+    
+    if (!ready) {
+        throw new Error('Stremio engine failed to start');
+    }
+    
+    isReady = true;
+    console.log(`[StremioEngine] ⚡ Engine ready at ${ENGINE_URL}`);
+    
+    return { success: true, url: ENGINE_URL };
+}
+
+/**
+ * Stop the engine
+ */
+export async function stopEngine() {
+    if (!engineProcess) {
+        return { success: true };
+    }
+    
+    console.log('[StremioEngine] Stopping...');
+    
+    try {
+        // Remove all torrents first
+        try {
+            await fetch(`${ENGINE_URL}/removeAll`, { timeout: 2000 });
+        } catch (e) {}
+        
+        // Kill process
+        engineProcess.kill('SIGTERM');
+        await new Promise(r => setTimeout(r, 500));
+        
+        if (engineProcess && !engineProcess.killed) {
+            engineProcess.kill('SIGKILL');
+        }
+    } catch (e) {}
+    
+    engineProcess = null;
+    isReady = false;
+    activeTorrents.clear();
+    torrentTimestamps.clear();
+    
+    // Clean up cache directory
+    const cacheDir = path.join(cachePath, 'stremio-cache');
+    if (cacheDir && fs.existsSync(cacheDir)) {
+        try {
+            fs.rmSync(cacheDir, { recursive: true, force: true });
+            console.log(`[StremioEngine] Cache cleaned: ${cacheDir}`);
+        } catch (e) {
+            console.error('[StremioEngine] Cache cleanup error:', e.message);
+        }
+    }
+    
+    console.log('[StremioEngine] Stopped');
+    return { success: true };
+}
+
+/**
+ * Check if engine is ready
+ */
+export function isEngineReady() {
+    return isReady;
+}
+
+/**
+ * Extract info hash from magnet
+ */
+function extractHash(magnet) {
+    const match = magnet.match(/btih:([a-fA-F0-9]{40})/i) || magnet.match(/btih:([a-zA-Z0-9]{32})/i);
+    return match ? match[1].toLowerCase() : null;
+}
+
+/**
+ * Add a torrent and get file list
+ */
+export async function addTorrent(magnet) {
+    if (!isReady) {
+        throw new Error('Engine not ready');
+    }
+    
+    const infoHash = extractHash(magnet);
+    if (!infoHash) {
+        throw new Error('Invalid magnet link');
+    }
+    
+    try {
+        // Create torrent in engine
+        const response = await fetch(`${ENGINE_URL}/${infoHash}/create`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                uri: magnet,
+                peerSearch: { min: 40, max: 200, sources: ['dht:' + infoHash] }
+            })
+        });
+        
+        if (!response.ok) {
+            throw new Error(`Failed to create torrent: ${response.status}`);
+        }
+        
+        const data = await response.json();
+        
+        // Track locally
+        activeTorrents.set(infoHash, { magnet, addedAt: Date.now() });
+        torrentTimestamps.set(infoHash, Date.now());
+        
+        console.log(`[StremioEngine] ⚡ Added: ${infoHash.substring(0, 8)}...`);
+        
+        return {
+            infoHash,
+            files: data.files || [],
+            ...data
+        };
+    } catch (error) {
+        console.error('[StremioEngine] Add error:', error.message);
+        throw error;
+    }
+}
+
+/**
+ * Get torrent files
+ */
+export async function getTorrentFiles(magnet) {
+    const result = await addTorrent(magnet);
+    
+    const videoRegex = /\.(mp4|mkv|avi|mov|webm|m4v|wmv|flv|ts|m2ts)$/i;
+    const subRegex = /\.(srt|vtt|ass|ssa|sub)$/i;
+    
+    const videoFiles = [];
+    const subtitleFiles = [];
+    
+    (result.files || []).forEach((file, index) => {
+        const fileInfo = {
+            index,
+            name: file.name || file.path || `File ${index}`,
+            path: file.path || file.name,
+            size: file.length || file.size || 0
+        };
+        
+        if (videoRegex.test(fileInfo.name)) {
+            videoFiles.push(fileInfo);
+        } else if (subRegex.test(fileInfo.name)) {
+            subtitleFiles.push(fileInfo);
+        }
+    });
+    
+    // Sort by size
+    videoFiles.sort((a, b) => b.size - a.size);
+    
+    return {
+        infoHash: result.infoHash,
+        name: result.name || 'Unknown',
+        videoFiles,
+        subtitleFiles,
+        files: videoFiles,
+        totalSize: result.files?.reduce((sum, f) => sum + (f.length || f.size || 0), 0) || 0
+    };
+}
+
+/**
+ * Get stream URL for a file
+ */
+export function getStreamUrl(infoHash, fileIndex) {
+    return `${ENGINE_URL}/${infoHash}/${fileIndex}`;
+}
+
+/**
+ * Get torrent stats
+ */
+export async function getStats(infoHash) {
+    if (!isReady) return null;
+    
+    try {
+        const response = await fetch(`${ENGINE_URL}/${infoHash}/stats.json`);
+        if (response.ok) {
+            torrentTimestamps.set(infoHash, Date.now());
+            return await response.json();
+        }
+    } catch (e) {}
+    
+    return null;
+}
+
+/**
+ * Remove a torrent
+ */
+export async function removeTorrent(hash) {
+    const infoHash = hash.toLowerCase();
+    
+    try {
+        await fetch(`${ENGINE_URL}/${infoHash}/remove`);
+        activeTorrents.delete(infoHash);
+        torrentTimestamps.delete(infoHash);
+        console.log(`[StremioEngine] Removed: ${infoHash.substring(0, 8)}...`);
+        return { success: true };
+    } catch (e) {
+        return { success: false, error: e.message };
+    }
+}
+
+/**
+ * Get overall status
+ */
+export async function getStatus() {
+    if (!isReady) {
+        return { running: false, activeTorrents: 0 };
+    }
+    
+    try {
+        const response = await fetch(`${ENGINE_URL}/stats.json`);
+        if (response.ok) {
+            const stats = await response.json();
+            return {
+                running: true,
+                url: ENGINE_URL,
+                activeTorrents: Object.keys(stats).length,
+                stats
+            };
+        }
+    } catch (e) {}
+    
+    return { running: true, activeTorrents: activeTorrents.size };
+}
+
+// Auto-cleanup inactive torrents
+setInterval(async () => {
+    if (!isReady) return;
+    
+    const now = Date.now();
+    const TIMEOUT = 30 * 60 * 1000;
+    
+    for (const [hash, timestamp] of torrentTimestamps.entries()) {
+        if (now - timestamp > TIMEOUT) {
+            console.log(`[StremioEngine] Auto-removing: ${hash.substring(0, 8)}...`);
+            await removeTorrent(hash);
+        }
+    }
+}, 10 * 60 * 1000);
+
+/**
+ * Clear the stremio cache directory
+ */
+export function clearStremioCache() {
+    if (!cachePath) {
+        return { success: false, message: 'Cache path not set' };
+    }
+    
+    const cacheDir = path.join(cachePath, 'stremio-cache');
+    if (fs.existsSync(cacheDir)) {
+        try {
+            fs.rmSync(cacheDir, { recursive: true, force: true });
+            console.log(`[StremioEngine] Cache cleared: ${cacheDir}`);
+            return { success: true, message: `Stremio cache cleared: ${cacheDir}` };
+        } catch (e) {
+            console.error('[StremioEngine] Cache cleanup error:', e.message);
+            return { success: false, message: `Failed to clear stremio cache: ${e.message}` };
+        }
+    }
+    
+    return { success: true, message: 'Stremio cache already empty' };
+}
+
+export { activeTorrents, torrentTimestamps, ENGINE_URL };

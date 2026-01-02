@@ -25,6 +25,7 @@ const subsMenu = document.getElementById('subs-menu');
 const audioList = document.getElementById('audio-list');
 const subsList = document.getElementById('subs-list');
 const nextEpisodeBtn = document.getElementById('next-episode-btn');
+const loadingOverlay = document.getElementById('loading-overlay');
 
 // URL params
 const params = new URLSearchParams(window.location.search);
@@ -58,6 +59,7 @@ let isFullscreen = false;
 let builtInSubs = [];        // Subtitles embedded in the video file
 let currentBuiltInSub = 0;   // Currently selected built-in sub track
 let builtInSubsRendered = false;
+let videoStarted = false;    // Track if video has started playing
 
 // Set title
 if (season && episode) {
@@ -202,6 +204,12 @@ ipcRenderer.on('mpv-status', (event, data) => {
     // Only show spinner when actually buffering (paused-for-cache or seeking)
     if (data.buffering !== undefined) {
         spinner.style.display = data.buffering ? 'block' : 'none';
+        // If buffering just ended, video is definitely ready - hide loading overlay
+        if (!data.buffering && !videoStarted) {
+            videoStarted = true;
+            if (loadingOverlay) loadingOverlay.classList.add('hidden');
+            console.log('[MPV] Video ready (buffering ended) - hiding loading overlay');
+        }
     }
     if (data.audioTracks) {
         audioTracks = data.audioTracks;
@@ -220,6 +228,19 @@ ipcRenderer.on('mpv-status', (event, data) => {
         currentBuiltInSub = data.currentSubTrack;
         renderBuiltInSubs();
     }
+    
+    // Hide loading overlay once video starts playing
+    // Trigger on any sign of video activity: duration known, position advancing, or playing state
+    if (!videoStarted) {
+        const hasActivity = duration > 0 || currentTime > 0 || isPlaying || 
+                           (data.audioTracks && data.audioTracks.length > 0);
+        if (hasActivity) {
+            videoStarted = true;
+            if (loadingOverlay) loadingOverlay.classList.add('hidden');
+            console.log('[MPV] Video started - hiding loading overlay');
+        }
+    }
+    
     updateTimeDisplay();
 });
 
