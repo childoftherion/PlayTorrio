@@ -1104,9 +1104,9 @@ function openInHtml5Player(win, streamUrl, startSeconds, metadata = {}) {
             mainWindow.removeListener('move', syncToPlayer);
             mainWindow.removeListener('resize', syncToPlayer);
             
-            // Cleanup WebTorrent ONLY if it was a local stream AND in Basic Mode
+            // Cleanup torrent stream ONLY if it was a local stream AND in Basic Mode
             // BUT skip cleanup if we're doing a same-torrent episode transition
-            if (metadata.isBasicMode && streamUrl && streamUrl.includes('/api/stream-file')) {
+            if (metadata.isBasicMode && streamUrl && (streamUrl.includes('/api/stream-file') || streamUrl.includes('/api/alt-stream-file'))) {
                 try {
                     const urlObj = new URL(streamUrl);
                     const hash = urlObj.searchParams.get('hash');
@@ -1116,8 +1116,10 @@ function openInHtml5Player(win, streamUrl, startSeconds, metadata = {}) {
                             console.log(`[Cleanup] Skipping cleanup for ${hash} (same torrent episode transition)`);
                             skipTorrentCleanupHash = null; // Reset the flag
                         } else {
-                            console.log(`[Cleanup] Basic Mode player closed, stopping local stream: ${hash}`);
-                            fetch(`http://localhost:6987/api/stop-stream?hash=${hash}`).catch(() => {});
+                            const isAltEngine = streamUrl.includes('/api/alt-stream-file');
+                            const endpoint = isAltEngine ? '/api/alt-stop-stream' : '/api/stop-stream';
+                            console.log(`[Cleanup] Basic Mode player closed, stopping local stream: ${hash}${isAltEngine ? ' (alt engine)' : ''}`);
+                            fetch(`http://localhost:6987${endpoint}?hash=${hash}`).catch(() => {});
                         }
                     }
                 } catch (e) {
@@ -1254,13 +1256,16 @@ function openInNodeMPVPlayer(win, streamUrl, startSeconds, metadata = {}) {
             // Reset fullscreen bounds
             mpvWindowBoundsBeforeFullscreen = null;
             
-            // Cleanup WebTorrent if needed
-            if (metadata.isBasicMode && streamUrl && streamUrl.includes('/api/stream-file')) {
+            // Cleanup torrent stream if needed (supports both Stremio and alt engines)
+            if (metadata.isBasicMode && streamUrl && (streamUrl.includes('/api/stream-file') || streamUrl.includes('/api/alt-stream-file'))) {
                 try {
                     const urlObj = new URL(streamUrl);
                     const hash = urlObj.searchParams.get('hash');
                     if (hash && skipTorrentCleanupHash !== hash) {
-                        fetch(`http://localhost:6987/api/stop-stream?hash=${hash}`).catch(() => {});
+                        const isAltEngine = streamUrl.includes('/api/alt-stream-file');
+                        const endpoint = isAltEngine ? '/api/alt-stop-stream' : '/api/stop-stream';
+                        console.log(`[Cleanup] Stopping torrent stream: ${hash}${isAltEngine ? ' (alt engine)' : ''}`);
+                        fetch(`http://localhost:6987${endpoint}?hash=${hash}`).catch(() => {});
                     }
                 } catch (e) {}
             }
@@ -4240,6 +4245,34 @@ async function performGracefulShutdown() {
             } catch (e) {
                 console.error('[Shutdown] Error during torrent cleanup:', e);
             }
+        }
+
+        // --- Clean up PlayTorrio temp folders ---
+        console.log('[Shutdown] Cleaning up PlayTorrio temp folders...');
+        try {
+            const tempBase = process.env.TEMP || process.env.TMP || os.tmpdir();
+            const foldersToDelete = [
+                'playtorrio-webtorrent',
+                'playtorrio-torrentstream', 
+                'playtorrio-hybrid',
+                'playtorrio-stream',
+                'playtorrio_subs'
+            ];
+            
+            for (const folder of foldersToDelete) {
+                const folderPath = path.join(tempBase, folder);
+                try {
+                    if (fs.existsSync(folderPath)) {
+                        await fs.promises.rm(folderPath, { recursive: true, force: true });
+                        console.log(`[Shutdown] Deleted: ${folderPath}`);
+                    }
+                } catch (e) {
+                    console.warn(`[Shutdown] Failed to delete ${folder}:`, e.message);
+                }
+            }
+            console.log('[Shutdown] Temp folders cleanup complete.');
+        } catch (e) {
+            console.error('[Shutdown] Error cleaning temp folders:', e);
         }
 
         // --- HTTP Server ---

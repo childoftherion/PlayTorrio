@@ -1,6 +1,6 @@
 {
   "name": "playtorrio",
-  "version": "2.4.2",
+  "version": "2.4.3",
   "description": "Ayman's PlayTorrio an all in one media center",
   "author": {
     "name": "Ayman",
@@ -36,6 +36,8 @@
     "node-fetch": "^3.3.2",
     "parse-torrent": "^9.0.3",
     "qs": "^6.14.0",
+    "torrent-stream": "^1.2.1",
+    "webtorrent": "^2.8.5",
     "xml2js": "^0.6.2"
   },
   "devDependencies": {
@@ -61,6 +63,11 @@
       "torrent_filter.mjs",
       "stremio_engine.mjs",
       "stremio_routes.mjs",
+      "webtorrent_engine.mjs",
+      "torrentstream_engine.mjs",
+      "hybrid_engine.mjs",
+      "torrent_engine_manager.mjs",
+      "torrent_engine_routes.mjs",
       "torrserver.mjs",
       "torrserver_routes.mjs",
       "jackett_api_key.json",

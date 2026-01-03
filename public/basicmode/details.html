@@ -416,6 +416,7 @@
             overlay: null,
             iframe: null,
             currentStreamHash: null,
+            isAltEngine: false,
             
             init() {
                 this.overlay = document.getElementById('player-overlay');
@@ -429,14 +430,16 @@
                         // Player requests cleanup of specific hash
                         if (event.data.hash) {
                             this.currentStreamHash = event.data.hash;
+                            this.isAltEngine = event.data.isAltEngine || false;
                         }
                     }
                 });
             },
             
-            open(playerUrl, streamHash) {
+            open(playerUrl, streamHash, isAltEngine = false) {
                 if (!this.overlay || !this.iframe) this.init();
                 this.currentStreamHash = streamHash || null;
+                this.isAltEngine = isAltEngine;
                 this.iframe.src = playerUrl;
                 this.overlay.classList.remove('hidden');
                 document.body.style.overflow = 'hidden';
@@ -445,10 +448,12 @@
             close() {
                 if (!this.overlay) return;
                 
-                // Cleanup stream if we have a hash (local WebTorrent stream)
+                // Cleanup stream if we have a hash (local torrent stream)
                 if (this.currentStreamHash) {
-                    fetch(`http://localhost:6987/api/stop-stream?hash=${this.currentStreamHash}`).catch(() => {});
+                    const endpoint = this.isAltEngine ? '/api/alt-stop-stream' : '/api/stop-stream';
+                    fetch(`http://localhost:6987${endpoint}?hash=${this.currentStreamHash}`).catch(() => {});
                     this.currentStreamHash = null;
+                    this.isAltEngine = false;
                 }
                 
                 this.overlay.classList.add('hidden');

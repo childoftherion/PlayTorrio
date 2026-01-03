@@ -24,6 +24,10 @@ const { registerApiRoutes, registerMusicApi, initMusicDeps } = require('./api.cj
 import { registerStremioRoutes } from './stremio_routes.mjs';
 import { clearStremioCache } from './stremio_engine.mjs';
 
+// Import unified Torrent Engine routes (supports multiple engines)
+import { registerTorrentEngineRoutes } from './torrent_engine_routes.mjs';
+import * as TorrentEngineManager from './torrent_engine_manager.mjs';
+
 
 
 
@@ -766,6 +770,10 @@ export function startServer(userDataPath, executablePath = null, ffmpegBin = nul
 
         // Use 127.0.0.1 for internal requests
         const targetUrl = videoUrl.replace('localhost', '127.0.0.1');
+        
+        // Check if this is an alt-engine torrent stream (needs output seeking)
+        const isAltEngineStream = targetUrl.includes('/api/alt-stream-file');
+        const startTime = parseFloat(start) || 0;
 
         // Allow forcing software encoding as fallback when hardware fails
         const useSoftware = forceSoftware === 'true' || forceSoftware === '1';
@@ -773,7 +781,7 @@ export function startServer(userDataPath, executablePath = null, ffmpegBin = nul
         const activePreset = useSoftware ? 'superfast' : encoderPreset;
         const activeHwAccel = useSoftware ? 'auto' : hwAccel;
 
-        console.log(`[Transcoder] Request: ${start}s [Q: ${quality}] [Enc: ${activeEncoder}]${useSoftware ? ' (SOFTWARE FALLBACK)' : ''}`);
+        console.log(`[Transcoder] Request: ${startTime}s [Q: ${quality}] [Enc: ${activeEncoder}]${useSoftware ? ' (SOFTWARE)' : ''}${isAltEngineStream ? ' (ALT-ENGINE)' : ''}`);
         
         res.writeHead(200, {
             'Content-Type': 'video/mp4',
@@ -850,10 +858,12 @@ export function startServer(userDataPath, executablePath = null, ffmpegBin = nul
             '-probesize', '2M',        // Minimal probing for instant start
             '-analyzeduration', '2M',  // Minimal analysis for instant start
             '-thread_queue_size', '512', // Larger queue for smoother streaming
-            
-            // Seek BEFORE input for faster startup (input seeking)
-            '-ss', start.toString(),
         ];
+        
+        // Input seeking - works for seekable streams (including torrent streams with range support)
+        if (startTime > 0) {
+            args.push('-ss', startTime.toString());
+        }
 
         // Hardware acceleration input decoding (only if not forcing software)
         if (!useSoftware) {
@@ -1272,7 +1282,9 @@ export function startServer(userDataPath, executablePath = null, ffmpegBin = nul
             useNodeMPV: !!s.useNodeMPV,
             mpvPath: s.mpvPath || null,
             discordActivity: s.discordActivity !== false,
-            showSponsor: s.showSponsor !== false
+            showSponsor: s.showSponsor !== false,
+            torrentEngine: s.torrentEngine || 'stremio',
+            torrentEngineInstances: s.torrentEngineInstances || 1
         });
     });
     
@@ -1295,6 +1307,8 @@ export function startServer(userDataPath, executablePath = null, ffmpegBin = nul
             mpvPath: req.body.mpvPath !== undefined ? (req.body.mpvPath || null) : (s.mpvPath || null),
             discordActivity: req.body.discordActivity !== undefined ? !!req.body.discordActivity : (s.discordActivity !== false),
             showSponsor: req.body.showSponsor !== undefined ? !!req.body.showSponsor : (s.showSponsor !== false),
+            torrentEngine: req.body.torrentEngine !== undefined ? req.body.torrentEngine : (s.torrentEngine || 'stremio'),
+            torrentEngineInstances: req.body.torrentEngineInstances !== undefined ? parseInt(req.body.torrentEngineInstances, 10) : (s.torrentEngineInstances || 1),
         };
         const ok = writeSettings(next);
         
@@ -4718,7 +4732,19 @@ for (let i = 0; i < 10; i++) {
     }));
 
     // ============================================================================
-    // STREMIO ENGINE - FAST TORRENT STREAMING
+    // TORRENT ENGINE MANAGER - MULTI-ENGINE SUPPORT
+    // ============================================================================
+    // Supports: Stremio, WebTorrent, TorrentStream, and Hybrid modes
+    // ============================================================================
+    
+    // Register unified Torrent Engine routes (handles all engine types)
+    const engineRefs = registerTorrentEngineRoutes(app, userDataPath);
+    const cleanupEngines = engineRefs.cleanup;
+    
+    console.log('[TorrentEngineManager] ⚡ Multi-engine routes registered');
+
+    // ============================================================================
+    // STREMIO ENGINE - FAST TORRENT STREAMING (Legacy/Fallback)
     // ============================================================================
     // Uses Stremio's bundled engine (engine/server.js) for maximum speed
     // ============================================================================
@@ -5998,9 +6024,16 @@ for (let i = 0; i < 10; i++) {
 
     // Cleanup function for graceful shutdown
     const cleanup = async () => {
-        console.log('[StremioEngine] Starting cleanup...');
+        console.log('[Server] Starting cleanup...');
         try {
+            // Cleanup alt torrent engines (WebTorrent, TorrentStream, Hybrid)
+            if (cleanupEngines) {
+                console.log('[Server] Cleaning up alt torrent engines...');
+                await cleanupEngines();
+            }
+            
             // Cleanup Stremio Engine
+            console.log('[Server] Cleaning up Stremio engine...');
             await cleanupStremio();
             
             // Clear local tracking maps
@@ -6008,9 +6041,9 @@ for (let i = 0; i < 10; i++) {
             streamingState.clear();
             peerStats.clear();
         } catch (e) {
-            console.error('[StremioEngine] Cleanup error:', e.message);
+            console.error('[Server] Cleanup error:', e.message);
         }
-        console.log('[StremioEngine] Cleanup complete');
+        console.log('[Server] Cleanup complete');
     };
 
     return { server, clearCache, clearStremioCache, cleanup, activeTorrents };

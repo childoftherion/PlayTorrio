@@ -1933,6 +1933,42 @@
             font-weight: 500;
         }
         
+        /* Torrent Engine Select Styles */
+        #torrentEngineSelect {
+            transition: all 0.3s ease;
+        }
+        
+        #torrentEngineSelect:hover {
+            border-color: #06b6d4;
+            box-shadow: 0 0 0 3px rgba(6, 182, 212, 0.15);
+        }
+        
+        #torrentEngineSelect:focus {
+            outline: none;
+            border-color: #06b6d4;
+            box-shadow: 0 0 0 3px rgba(6, 182, 212, 0.25);
+        }
+        
+        #torrentEngineSelect option {
+            background: #1a1a2e;
+            color: #fff;
+            padding: 1rem;
+            font-weight: 500;
+            font-size: 0.95rem;
+            line-height: 1.5;
+        }
+        
+        #torrentEngineSelect option:hover,
+        #torrentEngineSelect option:focus {
+            background: linear-gradient(135deg, #06b6d4, #0891b2);
+            color: #fff;
+        }
+        
+        #torrentEngineSelect option:checked {
+            background: linear-gradient(135deg, #06b6d4, #0891b2);
+            color: #fff;
+        }
+        
         /* Theme selector styles */
         #themeSelector {
             transition: all 0.5s cubic-bezier(0.25, 0.46, 0.45, 0.94), transform 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
@@ -9320,6 +9356,7 @@
                 <button class="settings-tab active" data-section="streaming">Streaming</button>
                 <button class="settings-tab" data-section="debrid">Debrid</button>
                 <button class="settings-tab" data-section="nodempv" id="nodempvTab" style="display:none;">Player</button>
+                <button class="settings-tab" data-section="engine">Engine</button>
                 <button class="settings-tab" data-section="ui">User Interface</button>
                 <button class="settings-tab" data-section="trakt">Trakt Integration</button>
                 <button class="settings-tab" data-section="addons">Addon Manager</button>
@@ -9586,6 +9623,57 @@
                             <div style="margin-top:0.75rem; padding:0.75rem; background:rgba(249,115,22,0.1); border-left:3px solid #f97316; border-radius:4px; font-size:0.85rem;">
                                 <i class="fas fa-download" style="color:#f97316;"></i> 
                                 <a href="#" id="downloadMpvLink" style="color:#f97316; text-decoration:underline;">Download MPV</a> if not installed.
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Torrent Engine Section -->
+                <div id="engineContent" class="settings-section">
+                    <div class="settings-card">
+                        <div class="settings-card-header">
+                            <h3><i class="fas fa-sync-alt" style="color: #06b6d4;"></i> Torrent Engine</h3>
+                        </div>
+                        <div class="settings-card-body">
+                            <div class="form-group">
+                                <label for="torrentEngineSelect">Engine Type</label>
+                                <select id="torrentEngineSelect">
+                                    <option value="stremio">Stremio Engine (Default)</option>
+                                    <option value="webtorrent">WebTorrent</option>
+                                    <option value="torrentstream">TorrentStream</option>
+                                    <option value="hybrid">Hybrid Mode</option>
+                                </select>
+                                <div style="margin-top:0.5rem; color:var(--gray); font-size:0.8rem;">
+                                    <i class="fas fa-info-circle"></i> Choose your preferred torrent streaming engine.
+                                </div>
+                            </div>
+                            
+                            <div id="engineInstancesContainer" class="form-group" style="display:none; margin-top:1.25rem;">
+                                <label for="engineInstancesSlider">
+                                    <i class="fas fa-layer-group" style="color:#06b6d4;"></i> 
+                                    Engine Instances: <span id="engineInstanceLabel" style="color:#06b6d4; font-weight:bold;">1</span>
+                                </label>
+                                <input type="range" id="engineInstancesSlider" min="1" max="3" value="1" style="width:100%; accent-color:#06b6d4; margin-top:0.5rem;" />
+                                <div style="display:flex; justify-content:space-between; color:var(--gray); font-size:0.75rem; margin-top:0.25rem;">
+                                    <span>1 (Light)</span>
+                                    <span>2 (Balanced)</span>
+                                    <span>3 (Maximum)</span>
+                                </div>
+                                <div style="margin-top:0.5rem; color:var(--gray); font-size:0.8rem;">
+                                    <i class="fas fa-bolt"></i> More instances = more peers = faster downloads. Uses more resources.
+                                </div>
+                            </div>
+                            
+                            <div id="engineInfoBox" style="margin-top:1.25rem; padding:1rem; background:rgba(6,182,212,0.1); border-left:4px solid #06b6d4; border-radius:6px;">
+                                <p id="engineDescription" style="color:#67e8f9; font-size:0.9rem; margin:0; line-height:1.5;">
+                                    Stremio's engine provides reliable streaming with built-in transcoding support.
+                                </p>
+                            </div>
+                            
+                            <div id="engineStatus" style="margin-top:1rem; padding:0.75rem; background:rgba(34,197,94,0.1); border-radius:6px; display:none;">
+                                <span style="color:#4ade80; font-size:0.85rem;">
+                                    <i class="fas fa-check-circle"></i> <span id="engineStatusText">Engine ready</span>
+                                </span>
                             </div>
                         </div>
                     </div>
@@ -11344,6 +11432,7 @@ If you experience audio problems or no audio at all, click <strong>"Open in MPV"
         overlay: null,
         iframe: null,
         currentStreamHash: null,
+        isAltEngine: false,
         
         init() {
             this.overlay = document.getElementById('player-overlay');
@@ -11357,14 +11446,16 @@ If you experience audio problems or no audio at all, click <strong>"Open in MPV"
                     // Player requests cleanup of specific hash
                     if (event.data.hash) {
                         this.currentStreamHash = event.data.hash;
+                        this.isAltEngine = event.data.isAltEngine || false;
                     }
                 }
             });
         },
         
-        open(playerUrl, streamHash) {
+        open(playerUrl, streamHash, isAltEngine = false) {
             if (!this.overlay || !this.iframe) this.init();
             this.currentStreamHash = streamHash || null;
+            this.isAltEngine = isAltEngine;
             this.iframe.src = playerUrl;
             this.overlay.style.display = 'block';
             document.body.style.overflow = 'hidden';
@@ -11373,10 +11464,12 @@ If you experience audio problems or no audio at all, click <strong>"Open in MPV"
         close() {
             if (!this.overlay) return;
             
-            // Cleanup stream if we have a hash (local WebTorrent stream)
+            // Cleanup stream if we have a hash (local torrent stream)
             if (this.currentStreamHash) {
-                fetch(`http://localhost:6987/api/stop-stream?hash=${this.currentStreamHash}`).catch(() => {});
+                const endpoint = this.isAltEngine ? '/api/alt-stop-stream' : '/api/stop-stream';
+                fetch(`http://localhost:6987${endpoint}?hash=${this.currentStreamHash}`).catch(() => {});
                 this.currentStreamHash = null;
+                this.isAltEngine = false;
             }
             
             this.overlay.style.display = 'none';
@@ -14695,14 +14788,23 @@ Your browser does not support the video tag.
                 }
             }
             
-            // Get Show Sponsor setting (prefer visible)
+            // Get Show Sponsor setting (prefer visible, fallback to any)
             const showSponsorToggles = document.querySelectorAll('#showSponsorToggle');
-            let showSponsorEnabled = true; // default ON
+            let showSponsorEnabled = null;
+            // First try to find a visible toggle
             for (const el of showSponsorToggles) {
                 if (el.offsetParent !== null) {
                     showSponsorEnabled = !!el.checked;
                     break;
                 }
+            }
+            // Fallback to any toggle if none visible
+            if (showSponsorEnabled === null && showSponsorToggles.length > 0) {
+                showSponsorEnabled = !!showSponsorToggles[0].checked;
+            }
+            // Default to true only if no toggles exist
+            if (showSponsorEnabled === null) {
+                showSponsorEnabled = true;
             }
             
             // Handle fullscreen toggle - get the visible one
@@ -17978,6 +18080,121 @@ Your browser does not support the video tag.
                     }
                 });
             }
+
+            // ===== TORRENT ENGINE SETTINGS =====
+            const torrentEngineSelect = document.getElementById('torrentEngineSelect');
+            const engineInstancesContainer = document.getElementById('engineInstancesContainer');
+            const engineInstancesSlider = document.getElementById('engineInstancesSlider');
+            const engineInstanceLabel = document.getElementById('engineInstanceLabel');
+            const engineDescription = document.getElementById('engineDescription');
+            const engineStatus = document.getElementById('engineStatus');
+            const engineStatusText = document.getElementById('engineStatusText');
+            
+            const engineDescriptions = {
+                stremio: "⚡ Stremio's engine provides reliable streaming with built-in transcoding support.",
+                webtorrent: "🌐 WebTorrent uses WebRTC for browser-compatible P2P streaming. Single instance only.",
+                torrentstream: "🚀 TorrentStream is optimized for video streaming with multi-instance swarm support.",
+                hybrid: "🔥 Combines WebTorrent and TorrentStream for maximum peer connectivity."
+            };
+            
+            function updateEngineUI(engine, instances) {
+                if (engineDescription) {
+                    engineDescription.textContent = engineDescriptions[engine] || engineDescriptions.stremio;
+                }
+                if (engineInstancesContainer) {
+                    // Show instances slider for non-stremio, non-webtorrent engines
+                    engineInstancesContainer.style.display = (engine !== 'stremio' && engine !== 'webtorrent') ? 'block' : 'none';
+                }
+                if (engineInstanceLabel) {
+                    engineInstanceLabel.textContent = instances;
+                }
+            }
+            
+            function showEngineStatus(message, isError = false) {
+                if (engineStatus && engineStatusText) {
+                    engineStatus.style.display = 'block';
+                    engineStatus.style.background = isError ? 'rgba(239,68,68,0.1)' : 'rgba(34,197,94,0.1)';
+                    engineStatusText.style.color = isError ? '#f87171' : '#4ade80';
+                    engineStatusText.innerHTML = message;
+                    // Hide after 3 seconds
+                    setTimeout(() => { engineStatus.style.display = 'none'; }, 3000);
+                }
+            }
+            
+            // Load current engine config
+            async function loadEngineConfig() {
+                try {
+                    const res = await fetch('/api/torrent-engine/config');
+                    if (!res.ok) throw new Error('Failed to fetch config');
+                    const config = await res.json();
+                    console.log('[Engine] Loaded config:', config);
+                    if (torrentEngineSelect) {
+                        torrentEngineSelect.value = config.engine || 'stremio';
+                    }
+                    if (engineInstancesSlider) {
+                        engineInstancesSlider.value = config.instances || 1;
+                    }
+                    updateEngineUI(config.engine || 'stremio', config.instances || 1);
+                } catch (e) {
+                    console.warn('[Engine] Failed to load config:', e);
+                }
+            }
+            
+            // Save engine config
+            async function saveEngineConfig(engine, instances) {
+                try {
+                    console.log('[Engine] Saving config:', { engine, instances });
+                    const res = await fetch('/api/torrent-engine/config', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ engine, instances })
+                    });
+                    if (!res.ok) {
+                        const err = await res.json();
+                        throw new Error(err.error || 'Failed to save');
+                    }
+                    const result = await res.json();
+                    console.log('[Engine] Config saved:', result);
+                    
+                    const engineNames = {
+                        stremio: 'Stremio Engine',
+                        webtorrent: 'WebTorrent',
+                        torrentstream: 'TorrentStream',
+                        hybrid: 'Hybrid Mode'
+                    };
+                    showEngineStatus(`${engineNames[engine]} activated${instances > 1 ? ` with ${instances} instances` : ''}`);
+                    showNotification(`Torrent engine: ${engineNames[engine]}${instances > 1 ? ` (${instances} instances)` : ''}`);
+                } catch (e) {
+                    console.error('[Engine] Failed to save config:', e);
+                    showEngineStatus('Failed to change engine: ' + e.message, true);
+                    showNotification('Failed to save engine config: ' + e.message);
+                }
+            }
+            
+            if (torrentEngineSelect) {
+                torrentEngineSelect.addEventListener('change', async () => {
+                    const engine = torrentEngineSelect.value;
+                    const instances = parseInt(engineInstancesSlider?.value || 1);
+                    updateEngineUI(engine, instances);
+                    await saveEngineConfig(engine, instances);
+                });
+            }
+            
+            if (engineInstancesSlider) {
+                engineInstancesSlider.addEventListener('input', () => {
+                    if (engineInstanceLabel) {
+                        engineInstanceLabel.textContent = engineInstancesSlider.value;
+                    }
+                });
+                engineInstancesSlider.addEventListener('change', async () => {
+                    const engine = torrentEngineSelect?.value || 'stremio';
+                    const instances = parseInt(engineInstancesSlider.value);
+                    await saveEngineConfig(engine, instances);
+                });
+            }
+            
+            // Load engine config on page load
+            loadEngineConfig();
 
             // ===== FEBBOX TOKEN EVENT LISTENER =====
             
@@ -27627,14 +27844,8 @@ async function fetchMovieBoxStreams(season = null, episode = null) {
             }
 
             // Fallback to WebTorrent (when Debrid is disabled OR debrid flow failed)
-            console.log('[UI][Stream] Using WebTorrent path');
+            console.log('[UI][Stream] Using torrent engine path');
             showPlayer();
-            mpvLoading.style.display = 'flex';
-            mpvControls.style.display = 'none';
-            fileList.innerHTML = '';
-            subtitleList.innerHTML = '';
-            subtitleControls.style.display = 'none';
-            playerTitle.textContent = 'Loading torrent info...';
             mpvLoading.style.display = 'flex';
             mpvControls.style.display = 'none';
             fileList.innerHTML = '';
@@ -27643,17 +27854,36 @@ async function fetchMovieBoxStreams(season = null, episode = null) {
             playerTitle.textContent = 'Loading torrent info...';
 
             try {
-                const response = await fetch(`${API_BASE_URL}/torrent-files?magnet=${encodeURIComponent(magnet)}`);
+                // Check which engine to use
+                let engineConfig = { engine: 'stremio', instances: 1 };
+                try {
+                    const cfgRes = await fetch('http://localhost:6987/api/torrent-engine/config');
+                    if (cfgRes.ok) engineConfig = await cfgRes.json();
+                } catch(e) { console.warn('[Engine] Config fetch failed, using stremio'); }
+                
+                const isAltEngine = engineConfig.engine !== 'stremio';
+                const engineNames = { stremio: 'Stremio', webtorrent: 'WebTorrent', torrentstream: 'TorrentStream', hybrid: 'Hybrid' };
+                const engineName = engineNames[engineConfig.engine] || 'Stremio';
+                
+                console.log('[UI][Stream] Using engine:', engineConfig.engine, 'isAlt:', isAltEngine);
+                
+                // Use appropriate endpoint based on engine
+                const filesUrl = isAltEngine 
+                    ? `http://localhost:6987/api/alt-torrent-files?magnet=${encodeURIComponent(magnet)}`
+                    : `${API_BASE_URL}/torrent-files?magnet=${encodeURIComponent(magnet)}`;
+                
+                const response = await fetch(filesUrl);
                 const data = await response.json();
                 currentTorrentData = data;
-                playerTitle.textContent = data.name || 'Selected Torrent'; // Update title with torrent name
+                currentTorrentData._isAltEngine = isAltEngine; // Store for displayFiles
+                playerTitle.textContent = data.name || 'Selected Torrent';
                 displayFiles(data.videoFiles || [], data.subtitleFiles || []);
-                // Set source badges to WebTorrent for this path
-                if (streamSourceBadge) { streamSourceBadge.textContent = 'WebTorrent'; streamSourceBadge.classList.remove('debrid'); streamSourceBadge.classList.add('webtorrent'); }
-                if (customSourceBadge) { customSourceBadge.textContent = 'WebTorrent'; customSourceBadge.classList.remove('debrid'); customSourceBadge.classList.add('webtorrent'); }
+                
+                // Set source badges
+                if (streamSourceBadge) { streamSourceBadge.textContent = engineName; streamSourceBadge.classList.remove('debrid'); streamSourceBadge.classList.add('webtorrent'); }
+                if (customSourceBadge) { customSourceBadge.textContent = engineName; customSourceBadge.classList.remove('debrid'); customSourceBadge.classList.add('webtorrent'); }
             } catch (error) {
                 console.error('Error getting torrent files:', error);
-                
             }
         }
 
@@ -27753,18 +27983,27 @@ async function fetchMovieBoxStreams(season = null, episode = null) {
                 });
 
                 item.addEventListener('click', async () => {
-                    currentStreamUrl = `${API_BASE_URL}/stream-file?hash=${currentTorrentData.infoHash}&file=${file.index}`;
+                    // Use appropriate endpoint based on engine
+                    const isAltEngine = currentTorrentData._isAltEngine || false;
+                    const streamUrl = isAltEngine 
+                        ? `http://localhost:6987/api/alt-stream-file?hash=${currentTorrentData.infoHash}&file=${file.index}`
+                        : `${API_BASE_URL}/stream-file?hash=${currentTorrentData.infoHash}&file=${file.index}`;
+                    const prepareUrl = isAltEngine
+                        ? `http://localhost:6987/api/alt-prepare-file?hash=${currentTorrentData.infoHash}&file=${file.index}`
+                        : `${API_BASE_URL}/prepare-file?hash=${currentTorrentData.infoHash}&file=${file.index}`;
+                    
+                    currentStreamUrl = streamUrl;
                     currentSelectedVideoName = baseName(file.name);
                     playerTitle.textContent = currentSelectedVideoName;
-                    // Compute resume key and prefetch resume info for WebTorrent
+                    // Compute resume key and prefetch resume info
                     try {
                         resumeKey = `webtorrent:${currentTorrentData.infoHash}:${file.index}`;
                         resumeInfo = await fetchResume(resumeKey);
                     } catch(_) {}
                     mpvControls.style.display = 'flex';
-                    // Ask backend to begin downloading the selected file and subtitles, but don't start playback yet
+                    // Ask backend to begin downloading the selected file
                     try {
-                        await fetch(`${API_BASE_URL}/prepare-file?hash=${currentTorrentData.infoHash}&file=${file.index}`);
+                        await fetch(prepareUrl);
                     } catch (_) {}
                     showNotification(`Selected: ${currentSelectedVideoName}. Click Play Now or Open in MPV to start.`);
                 });

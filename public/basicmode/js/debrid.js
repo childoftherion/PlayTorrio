@@ -398,3 +398,108 @@ export const hideSponsorBasic = async () => {
 
 // Make hideSponsorBasic available globally for onclick handler
 window.hideSponsorBasic = hideSponsorBasic;
+
+
+// Torrent Engine Settings
+export const initTorrentEngineUI = async () => {
+    const engineSelect = document.getElementById('torrent-engine-select');
+    const instancesContainer = document.getElementById('engine-instances-container');
+    const instancesSlider = document.getElementById('engine-instances-slider');
+    const instanceCountLabel = document.getElementById('instance-count-label');
+    const engineDescription = document.getElementById('engine-description');
+    
+    if (!engineSelect) return;
+    
+    const descriptions = {
+        stremio: "Stremio's engine provides reliable streaming with built-in transcoding support.",
+        webtorrent: "WebTorrent uses WebRTC for browser-compatible P2P streaming. Great for modern setups.",
+        torrentstream: "TorrentStream is a lightweight, battle-tested engine optimized for video streaming.",
+        hybrid: "Hybrid mode uses BOTH WebTorrent and TorrentStream simultaneously for maximum download speed!"
+    };
+    
+    // Load current settings from BOTH sources (server engine config takes priority)
+    let currentEngine = 'stremio';
+    let currentInstances = 1;
+    
+    try {
+        // First try to get from engine config API (actual running state)
+        const engineConfig = await fetch('/api/torrent-engine/config').then(r => r.json());
+        if (engineConfig && engineConfig.engine) {
+            currentEngine = engineConfig.engine;
+            currentInstances = engineConfig.instances || 1;
+            console.log(`[TorrentEngineUI] Loaded from server: ${currentEngine}, instances: ${currentInstances}`);
+        }
+    } catch (e) {
+        console.warn('[TorrentEngineUI] Failed to load engine config from server:', e);
+        // Fallback to settings
+        const settings = await getDebridSettings();
+        if (settings.torrentEngine) {
+            currentEngine = settings.torrentEngine;
+        }
+        if (settings.torrentEngineInstances) {
+            currentInstances = settings.torrentEngineInstances;
+        }
+    }
+    
+    engineSelect.value = currentEngine;
+    instancesSlider.value = currentInstances;
+    instanceCountLabel.textContent = currentInstances;
+    
+    // Update UI based on current selection
+    const updateUI = (engine) => {
+        engineDescription.textContent = descriptions[engine] || descriptions.stremio;
+        
+        // Show/hide instances slider (not for Stremio)
+        if (engine === 'stremio') {
+            instancesContainer.classList.add('hidden');
+        } else {
+            instancesContainer.classList.remove('hidden');
+        }
+    };
+    
+    updateUI(engineSelect.value);
+    
+    // Event listeners
+    engineSelect.addEventListener('change', async (e) => {
+        const engine = e.target.value;
+        updateUI(engine);
+        await saveDebridSettings({ torrentEngine: engine });
+        
+        // Apply engine change to server
+        try {
+            await fetch('/api/torrent-engine/config', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ 
+                    engine, 
+                    instances: parseInt(instancesSlider.value, 10) 
+                })
+            });
+        } catch (e) {
+            console.error('[TorrentEngine] Failed to update engine:', e);
+        }
+    });
+    
+    instancesSlider.addEventListener('input', (e) => {
+        instanceCountLabel.textContent = e.target.value;
+    });
+    
+    instancesSlider.addEventListener('change', async (e) => {
+        const instances = parseInt(e.target.value, 10);
+        await saveDebridSettings({ torrentEngineInstances: instances });
+        
+        // Apply to server
+        try {
+            await fetch('/api/torrent-engine/config', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ 
+                    engine: engineSelect.value, 
+                    instances 
+                })
+            });
+        } catch (e) {
+            console.error('[TorrentEngine] Failed to update instances:', e);
+        }
+    });
+};

@@ -153,18 +153,25 @@ async function openPlayerInIframe(options) {
     
     const playerUrl = `http://localhost:6987/player.html?${params.toString()}`;
     
-    // Extract stream hash for cleanup (if local WebTorrent stream)
+    // Extract stream hash for cleanup (if local torrent stream)
     let streamHash = null;
-    if (url && url.includes('/api/stream-file')) {
+    let isAltEngine = false;
+    if (url && (url.includes('/api/stream-file') || url.includes('/api/alt-stream-file'))) {
         try {
             const urlObj = new URL(url);
             streamHash = urlObj.searchParams.get('hash');
+            isAltEngine = url.includes('/api/alt-stream-file');
         } catch (e) {}
+    }
+    
+    // Store alt engine flag for cleanup
+    if (streamHash && isAltEngine) {
+        window._altEngineStreamHash = streamHash;
     }
     
     // Use the playerOverlay from the parent page (HTML5 player)
     if (window.playerOverlay) {
-        window.playerOverlay.open(playerUrl, streamHash);
+        window.playerOverlay.open(playerUrl, streamHash, isAltEngine);
         hidePlayLoading();
         return { success: true };
     }
@@ -1226,15 +1233,33 @@ const displaySources = (sources) => {
                     alert('Error preparing torrent: ' + err.message);
                 }
             } else {
-                // WebTorrent Path: Fetch metadata and list files
+                // Torrent Engine Path: Fetch metadata and list files
                 showPlayLoading('Fetching torrent metadata...');
-                console.log(`[WebTorrent] Fetching metadata for: ${source.title}`);
+                console.log(`[TorrentEngine] Fetching metadata for: ${source.title}`);
                 try {
-                    const res = await fetch(`/api/torrent-files?magnet=${encodeURIComponent(activeLink)}`);
+                    // Check which engine is configured
+                    let engineConfig = { engine: 'stremio' };
+                    try {
+                        const configRes = await fetch('/api/torrent-engine/config');
+                        if (configRes.ok) {
+                            engineConfig = await configRes.json();
+                        }
+                    } catch (e) {
+                        console.warn('[TorrentEngine] Failed to get engine config, defaulting to stremio');
+                    }
+                    
+                    const isAltEngine = engineConfig.engine !== 'stremio';
+                    console.log(`[TorrentEngine] Engine config: ${engineConfig.engine}, isAltEngine: ${isAltEngine}`);
+                    
+                    // Use appropriate API endpoint based on engine
+                    const apiEndpoint = isAltEngine ? '/api/alt-torrent-files' : '/api/torrent-files';
+                    console.log(`[TorrentEngine] Using ${engineConfig.engine} engine via ${apiEndpoint}`);
+                    
+                    const res = await fetch(`${apiEndpoint}?magnet=${encodeURIComponent(activeLink)}`);
                     const data = await res.json();
                     
-                    if (data) {
-                        console.log(`--- WEBTORRENT DATA RECEIVED: ${data.name} ---`);
+                    if (data && !data.error) {
+                        console.log(`--- TORRENT DATA RECEIVED: ${data.name} ---`);
                         const allFiles = [...(data.videoFiles || []), ...(data.subtitleFiles || [])];
                         
                         let targetFile = null;
@@ -1247,11 +1272,18 @@ const displaySources = (sources) => {
                         if (targetFile) {
                             showPlayLoading('Starting stream...');
                             console.log(`[TARGET MATCHED] ${targetFile.name} (${(targetFile.size / 1024 / 1024).toFixed(2)} MB)`);
-                            console.log(`[WebTorrent] Starting stream for file index: ${targetFile.index}`);
+                            console.log(`[TorrentEngine] Starting stream for file index: ${targetFile.index}`);
                             
-                            // Trigger prepare-file and then open player
-                            const streamUrl = `${window.location.origin}/api/stream-file?hash=${data.infoHash}&file=${targetFile.index}`;
-                            fetch(`/api/prepare-file?hash=${data.infoHash}&file=${targetFile.index}`);
+                            // Use appropriate stream endpoint based on engine
+                            const streamEndpoint = isAltEngine ? '/api/alt-stream-file' : '/api/stream-file';
+                            const prepareEndpoint = isAltEngine ? '/api/alt-prepare-file' : '/api/prepare-file';
+                            
+                            console.log(`[TorrentEngine] Stream endpoint: ${streamEndpoint}`);
+                            
+                            const streamUrl = `${window.location.origin}${streamEndpoint}?hash=${data.infoHash}&file=${targetFile.index}`;
+                            console.log(`[TorrentEngine] Stream URL: ${streamUrl}`);
+                            
+                            fetch(`${prepareEndpoint}?hash=${data.infoHash}&file=${targetFile.index}`);
                             
                             // Launch player using iframe overlay
                             openPlayerInIframe({
@@ -1282,10 +1314,10 @@ const displaySources = (sources) => {
                         console.log(`-------------------------------------------`);
                     } else {
                         hidePlayLoading();
-                        alert('Failed to get torrent info.');
+                        alert('Failed to get torrent info: ' + (data?.error || 'Unknown error'));
                     }
                 } catch (err) {
-                    console.error('[WebTorrent] Error fetching torrent info:', err);
+                    console.error('[TorrentEngine] Error fetching torrent info:', err);
                     hidePlayLoading();
                     alert('Error fetching torrent: ' + err.message);
                 }

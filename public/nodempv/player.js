@@ -699,17 +699,19 @@ window.selectBuiltInSub = async (trackId) => {
     console.log('[MPV] Built-in subtitle selected:', trackId);
 };
 
-// Cleanup WebTorrent on window close
+// Cleanup torrent stream on window close
 window.addEventListener('beforeunload', () => {
-    // Extract hash from video URL if it's a WebTorrent stream
-    if (videoUrl && videoUrl.includes('/api/stream-file')) {
+    // Extract hash from video URL if it's a torrent stream
+    if (videoUrl && (videoUrl.includes('/api/stream-file') || videoUrl.includes('/api/alt-stream-file'))) {
         try {
             const urlObj = new URL(videoUrl);
             const hash = urlObj.searchParams.get('hash');
             if (hash) {
-                console.log('[Cleanup] Stopping WebTorrent stream:', hash);
+                const isAltEngine = videoUrl.includes('/api/alt-stream-file');
+                const endpoint = isAltEngine ? '/api/alt-stop-stream' : '/api/stop-stream';
+                console.log('[Cleanup] Stopping torrent stream:', hash, isAltEngine ? '(alt engine)' : '');
                 // Use sendBeacon for reliable cleanup on page unload
-                navigator.sendBeacon(`/api/stop-stream?hash=${hash}`);
+                navigator.sendBeacon(`${endpoint}?hash=${hash}`);
             }
         } catch (e) {
             console.error('[Cleanup] Error:', e);

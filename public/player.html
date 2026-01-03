@@ -521,6 +521,18 @@
         const providerUrl = params.get('providerUrl') || '';  // addon base URL
         const quality = params.get('quality') || '1080p';
         
+        // Debug: Log the received URL immediately
+        console.log('[Player] Received videoUrl from params:', videoUrl);
+        console.log('[Player] Full URL search params:', window.location.search);
+        debugLog(`Received videoUrl: ${videoUrl}`, 'info');
+        
+        // Test: Check if URL contains alt-stream-file
+        if (videoUrl) {
+            console.log('[Player] URL contains /api/alt-stream-file:', videoUrl.includes('/api/alt-stream-file'));
+            console.log('[Player] URL contains /api/stream-file:', videoUrl.includes('/api/stream-file'));
+            console.log('[Player] URL starts with http:', videoUrl.startsWith('http'));
+        }
+        
         // Extract and notify stream hash for cleanup
         if (videoUrl && videoUrl.includes('/api/stream-file')) {
             try {
@@ -590,9 +602,21 @@
             initSubtitles(tmdbId, imdbId, season, episode, type);
         }
         
-        // Check if this is a torrent stream
+        // Check if this is a torrent stream (Stremio engine)
         function isTorrentStream(url) {
-            return url && url.includes('/api/stream-file');
+            if (!url) return false;
+            // Handle both encoded and decoded URLs
+            const decoded = decodeURIComponent(url);
+            return (url.includes('/api/stream-file') || decoded.includes('/api/stream-file')) && 
+                   !url.includes('/api/alt-stream-file') && !decoded.includes('/api/alt-stream-file');
+        }
+        
+        // Check if this is an alt-engine torrent stream (WebTorrent/TorrentStream)
+        function isAltEngineTorrentStream(url) {
+            if (!url) return false;
+            // Handle both encoded and decoded URLs
+            const decoded = decodeURIComponent(url);
+            return url.includes('/api/alt-stream-file') || decoded.includes('/api/alt-stream-file');
         }
         
         // Extract hash and file index from torrent stream URL
@@ -602,7 +626,8 @@
                 const urlObj = new URL(url);
                 return {
                     hash: urlObj.searchParams.get('hash'),
-                    file: urlObj.searchParams.get('file')
+                    file: urlObj.searchParams.get('file'),
+                    transcode: urlObj.searchParams.get('transcode')
                 };
             } catch (e) {
                 // Try manual parsing if URL constructor fails
@@ -619,20 +644,29 @@
             document.getElementById('loading-spinner').style.display = 'block';
             lastAbsoluteTime = start || 0;
             
-            console.log('Player init:', url);
+            debugLog(`Player init - URL: ${url}`, 'info');
             
-            // Check if torrent stream
-            if (isTorrentStream(url)) {
+            // Decode URL if it's encoded
+            let decodedUrl = url;
+            try {
+                decodedUrl = decodeURIComponent(url);
+                if (decodedUrl !== url) {
+                    url = decodedUrl;
+                }
+            } catch (e) {}
+            
+            // Check if torrent stream (Stremio engine) - NOT alt-engine
+            if (isTorrentStream(url) && !isAltEngineTorrentStream(url)) {
                 const info = parseTorrentUrl(url);
-                console.log('Torrent info:', info);
                 if (info && info.hash && info.file !== null) {
                     loadStremioHLS(info.hash, info.file, start);
                     return;
                 }
             }
             
-            // Debrid/direct URL - use FFmpeg
-            console.log('Using FFmpeg transcoder');
+            // For alt-engine streams AND debrid/direct URLs - use player's transcoder
+            // Alt-engine provides raw stream, player's transcoder handles everything
+            debugLog('Using player transcoder', 'info');
             isTranscoding = true;
             currentQuality = 'mid';
             updateTranscodeUI();
@@ -644,8 +678,9 @@
             
             loadTranscodedStream(url, start);
             
+            // After 3 seconds, switch to native quality if not a Stremio torrent
             setTimeout(() => {
-                if (!isTorrentStream(videoUrl)) {
+                if (!isTorrentStream(videoUrl) || isAltEngineTorrentStream(videoUrl)) {
                     currentQuality = 'native';
                     document.querySelectorAll('#settings-list .list-item').forEach(el => {
                         el.classList.remove('active');
@@ -655,6 +690,7 @@
                 }
             }, 3000);
             
+            // Fetch metadata from transcoder
             fetch(`http://127.0.0.1:6987/api/transcode/metadata?url=${encodeURIComponent(url)}`)
                 .then(async (r) => {
                     if (r.ok) {
@@ -763,7 +799,7 @@
                 video.play().catch(e => console.warn('Autoplay blocked:', e));
             };
         }
-
+        
         function fallbackToTranscoder(url, start) {
             if (isTranscoding) return;
             isTranscoding = true;
@@ -773,6 +809,7 @@
         
         // Smart stream loader - uses remux for compatible codecs, transcode for others
         function loadSmartStream(url, start) {
+            console.log(`[loadSmartStream] url: ${url?.substring(0, 50)}..., start: ${start}, useRemux: ${useRemux}`);
             if (useRemux) {
                 loadRemuxStream(url, start);
             } else {
@@ -884,13 +921,15 @@
             audioTracks.forEach(track => {
                 const el = document.createElement('div');
                 el.className = 'list-item' + (currentAudioTrack === track.id ? ' active' : '');
-                el.innerHTML = `<span>${track.title} (${track.language.toUpperCase()})</span>`;
+                el.innerHTML = `<span>${track.label || track.title || 'Track ' + track.id} (${(track.language || 'und').toUpperCase()})</span>`;
                 el.onclick = () => {
-                    if (currentAudioTrack === track.id && isTranscoding) return;
+                    if (currentAudioTrack === track.id) return;
                     
                     currentAudioTrack = track.id;
                     document.querySelectorAll('#audio-list .list-item').forEach(x => x.classList.remove('active'));
                     el.classList.add('active');
+                    
+                    const currentTime = lastAbsoluteTime;
                     
                     // If switching to non-web-compatible audio, force transcoding
                     if (useRemux && sourceMetadata?.audioTracks?.[track.id] && !sourceMetadata.audioTracks[track.id].webCompatible) {
@@ -898,7 +937,6 @@
                         useRemux = false;
                     }
                     
-                    const currentTime = lastAbsoluteTime; // Use reliable tracked time
                     isTranscoding = true;
                     loadSmartStream(videoUrl, currentTime);
                     document.getElementById('audio-menu').classList.remove('visible');
@@ -1276,11 +1314,20 @@
         progressWrapper.onclick = (e) => {
             const rect = progressWrapper.getBoundingClientRect();
             const pos = (e.clientX - rect.left) / rect.width;
-            const currentDuration = (isTranscoding && videoDuration > 0) ? videoDuration : video.duration;
-            if (isFinite(currentDuration)) {
+            const currentDuration = videoDuration || video.duration;
+            console.log(`[Seek] Click at ${pos.toFixed(2)}, duration: ${currentDuration}, isTranscoding: ${isTranscoding}`);
+            if (isFinite(currentDuration) && currentDuration > 0) {
                 const newTime = pos * currentDuration;
-                if (isTranscoding) loadSmartStream(videoUrl, newTime);
-                else video.currentTime = newTime;
+                console.log(`[Seek] Seeking to ${newTime.toFixed(1)}s`);
+                if (isTranscoding) {
+                    console.log(`[Seek] Using transcoder seek`);
+                    loadSmartStream(videoUrl, newTime);
+                } else {
+                    console.log(`[Seek] Using native seek`);
+                    video.currentTime = newTime;
+                }
+            } else {
+                console.log(`[Seek] Invalid duration, cannot seek`);
             }
         };
 
@@ -1588,17 +1635,25 @@
             if (e.key === ' ' || e.key === 'k') togglePlay();
             if (e.key === 'f') fsBtn.click();
             if (e.key === 'ArrowRight') {
-                const currentDuration = (isTranscoding && videoDuration > 0) ? videoDuration : video.duration;
+                const currentDuration = videoDuration || video.duration;
                 const currentTime = getCurrentRealTime();
                 const newTime = Math.min(currentDuration, currentTime + 10);
-                if (isTranscoding) loadSmartStream(videoUrl, newTime);
-                else video.currentTime = newTime;
+                console.log(`[Seek] Arrow right: ${currentTime.toFixed(1)}s -> ${newTime.toFixed(1)}s`);
+                if (isTranscoding) {
+                    loadSmartStream(videoUrl, newTime);
+                } else {
+                    video.currentTime = newTime;
+                }
             }
             if (e.key === 'ArrowLeft') {
                 const currentTime = getCurrentRealTime();
                 const newTime = Math.max(0, currentTime - 10);
-                if (isTranscoding) loadSmartStream(videoUrl, newTime);
-                else video.currentTime = newTime;
+                console.log(`[Seek] Arrow left: ${currentTime.toFixed(1)}s -> ${newTime.toFixed(1)}s`);
+                if (isTranscoding) {
+                    loadSmartStream(videoUrl, newTime);
+                } else {
+                    video.currentTime = newTime;
+                }
             }
             if (e.key === 'Escape') {
                 if (document.fullscreenElement) document.exitFullscreen();
@@ -1866,9 +1921,20 @@
             
             // Step 3: Cleanup current torrent if WebTorrent (non-debrid)
             if (!isDebrid && currentTorrentHash) {
-                debugLog('[NextEp] Cleaning up current WebTorrent session...');
+                debugLog('[NextEp] Cleaning up current torrent session...');
                 try {
-                    await fetch(`/api/stop-stream?hash=${currentTorrentHash}`);
+                    // Check engine config to use correct stop endpoint
+                    let stopEndpoint = '/api/stop-stream';
+                    try {
+                        const configRes = await fetch('/api/torrent-engine/config');
+                        const config = await configRes.json();
+                        if (config.engine !== 'stremio') {
+                            stopEndpoint = '/api/alt-stop-stream';
+                        }
+                        debugLog('[NextEp] Using stop endpoint: ' + stopEndpoint);
+                    } catch (e) {}
+                    
+                    await fetch(`${stopEndpoint}?hash=${currentTorrentHash}`);
                     if (window.electronAPI?.clearWebtorrentTemp) {
                         await window.electronAPI.clearWebtorrentTemp();
                     }
@@ -1883,10 +1949,26 @@
         
         async function playFromSameTorrent(file, nextSeason, nextEp) {
             const fileIndex = file.index !== undefined ? file.index : currentTorrentFiles.indexOf(file);
-            const newStreamUrl = `http://127.0.0.1:6987/api/stream-file?hash=${currentTorrentHash}&file=${fileIndex}`;
+            
+            // Check engine config to determine which endpoints to use
+            let isAltEngine = false;
+            try {
+                const configRes = await fetch('/api/torrent-engine/config');
+                const config = await configRes.json();
+                isAltEngine = config.engine !== 'stremio';
+                debugLog('[NextEp] Same torrent - Engine: ' + config.engine + ', isAltEngine: ' + isAltEngine);
+            } catch (e) {
+                debugLog('[NextEp] Failed to get engine config, using Stremio', 'warn');
+            }
+            
+            // Use appropriate endpoints based on engine
+            const streamEndpoint = isAltEngine ? '/api/alt-stream-file' : '/api/stream-file';
+            const prepareEndpoint = isAltEngine ? '/api/alt-prepare-file' : '/api/prepare-file';
+            
+            const newStreamUrl = `http://127.0.0.1:6987${streamEndpoint}?hash=${currentTorrentHash}&file=${fileIndex}`;
             
             // Prepare the file for streaming
-            fetch(`/api/prepare-file?hash=${currentTorrentHash}&file=${fileIndex}`);
+            fetch(`${prepareEndpoint}?hash=${currentTorrentHash}&file=${fileIndex}`);
             
             debugLog('[NextEp] Same torrent fast-path: loading new episode');
             debugLog('[NextEp] New stream URL: ' + newStreamUrl);
@@ -1931,8 +2013,18 @@
             // Show loading spinner
             document.getElementById('loading-spinner').style.display = 'block';
             
-            // Use Stremio HLS for torrent streams (FAST)
-            loadStremioHLS(currentTorrentHash, fileIndex, 0);
+            // For alt-engine, use player's transcoder; for Stremio, use HLS
+            if (isAltEngine) {
+                debugLog('[NextEp] Using player transcoder for alt-engine stream');
+                isTranscoding = true;
+                currentQuality = 'native';
+                updateTranscodeUI();
+                document.getElementById('settings-btn').style.display = 'flex';
+                loadTranscodedStream(newStreamUrl, 0);
+            } else {
+                // Use Stremio HLS for torrent streams (FAST)
+                loadStremioHLS(currentTorrentHash, fileIndex, 0);
+            }
             
             // Fetch new subtitles
             if (tmdbId || imdbId) {
@@ -2485,20 +2577,37 @@
                 }
                 throw new Error('Debrid resolution failed');
             } else {
-                // WebTorrent path - need to stop old torrent first
-                debugLog('[NextEp] Using WebTorrent for next episode');
+                // Torrent path - check which engine to use
+                debugLog('[NextEp] Using torrent engine for next episode');
+                
+                // Check engine config
+                let isAltEngine = false;
+                try {
+                    const configRes = await fetch('/api/torrent-engine/config');
+                    const config = await configRes.json();
+                    isAltEngine = config.engine !== 'stremio';
+                    debugLog('[NextEp] Engine config: ' + config.engine + ', isAltEngine: ' + isAltEngine);
+                } catch (e) {
+                    debugLog('[NextEp] Failed to get engine config, using Stremio', 'warn');
+                }
                 
                 // Stop the old torrent before starting new one
                 if (currentTorrentHash) {
                     debugLog('[NextEp] Stopping old torrent: ' + currentTorrentHash);
                     try {
-                        await fetch(`/api/stop-stream?hash=${currentTorrentHash}`);
+                        const stopEndpoint = isAltEngine ? '/api/alt-stop-stream' : '/api/stop-stream';
+                        await fetch(`${stopEndpoint}?hash=${currentTorrentHash}`);
                     } catch (e) {
                         debugLog('[NextEp] Failed to stop old torrent: ' + e.message, 'warn');
                     }
                 }
                 
-                const torrentRes = await fetch(`/api/torrent-files?magnet=${encodeURIComponent(magnet)}`);
+                // Use appropriate endpoints based on engine
+                const filesEndpoint = isAltEngine ? '/api/alt-torrent-files' : '/api/torrent-files';
+                const streamEndpoint = isAltEngine ? '/api/alt-stream-file' : '/api/stream-file';
+                const prepareEndpoint = isAltEngine ? '/api/alt-prepare-file' : '/api/prepare-file';
+                
+                const torrentRes = await fetch(`${filesEndpoint}?magnet=${encodeURIComponent(magnet)}`);
                 const torrentData = await torrentRes.json();
                 
                 if (torrentData && torrentData.videoFiles) {
@@ -2506,8 +2615,8 @@
                     const targetFile = findNextEpisodeInTorrent(allFiles, nextSeason, nextEp);
                     
                     if (targetFile) {
-                        const newStreamUrl = `http://127.0.0.1:6987/api/stream-file?hash=${torrentData.infoHash}&file=${targetFile.index}`;
-                        fetch(`/api/prepare-file?hash=${torrentData.infoHash}&file=${targetFile.index}`);
+                        const newStreamUrl = `http://127.0.0.1:6987${streamEndpoint}?hash=${torrentData.infoHash}&file=${targetFile.index}`;
+                        fetch(`${prepareEndpoint}?hash=${torrentData.infoHash}&file=${targetFile.index}`);
                         
                         // Update current torrent tracking
                         currentTorrentHash = torrentData.infoHash;
