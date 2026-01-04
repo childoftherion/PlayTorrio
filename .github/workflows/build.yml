@@ -101,7 +101,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
 
   build-macos-x64:
-    runs-on: macos-13
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
 
