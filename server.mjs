@@ -6694,31 +6694,47 @@ for (let i = 0; i < 10; i++) {
             const { id } = req.params;
             const { deleteFile } = req.query;
             
-            // Stop if active
+            console.log(`[GameDownloads] Removing download: ${id}, deleteFile: ${deleteFile}`);
+            
+            // Stop if active - force abort
             const active = activeGameDownloads.get(id);
             if (active) {
-                active.controller.abort();
+                try {
+                    active.controller.abort();
+                } catch (e) {
+                    console.warn('[GameDownloads] Error aborting download:', e.message);
+                }
                 activeGameDownloads.delete(id);
             }
             
+            // Load current data
             const data = loadGameDownloads();
             const download = data.downloads.find(d => d.id === id);
             
+            // Delete file if requested
             if (download && deleteFile === 'true' && download.filePath) {
                 try {
                     if (fs.existsSync(download.filePath)) {
                         fs.unlinkSync(download.filePath);
+                        console.log(`[GameDownloads] Deleted file: ${download.filePath}`);
                     }
                 } catch (e) {
                     console.warn('[GameDownloads] Could not delete file:', e.message);
                 }
             }
             
+            // Remove from list
+            const originalLength = data.downloads.length;
             data.downloads = data.downloads.filter(d => d.id !== id);
+            
+            // Save immediately
             saveGameDownloads(data);
             
-            res.json({ success: true });
+            console.log(`[GameDownloads] Removed ${id}. Downloads: ${originalLength} -> ${data.downloads.length}`);
+            
+            res.json({ success: true, removed: originalLength !== data.downloads.length });
         } catch (e) {
+            console.error('[GameDownloads] Delete error:', e);
             res.status(500).json({ error: e.message });
         }
     });

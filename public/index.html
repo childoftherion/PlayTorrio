@@ -16994,15 +16994,42 @@ Your browser does not support the video tag.
         async function removeGameDownload(id) {
             if (!confirm('Remove this download? The file will also be deleted.')) return;
             try {
-                // First stop/abort the download if active, then delete
-                await fetch(`/api/game-downloads/pause/${id}`, { method: 'POST' }).catch(() => {});
+                // First, immediately remove from UI to give instant feedback
+                const grid = document.getElementById('games-library-grid');
+                const cardToRemove = grid.querySelector(`[data-id="${id}"]`)?.closest('div[style*="background"]');
+                if (cardToRemove) {
+                    cardToRemove.style.opacity = '0.5';
+                    cardToRemove.style.pointerEvents = 'none';
+                }
+                
+                // Stop/abort the download if active
+                try {
+                    await fetch(`/api/game-downloads/pause/${id}`, { method: 'POST' });
+                } catch (e) {
+                    // Ignore pause errors
+                }
+                
                 // Small delay to ensure pause completes
+                await new Promise(r => setTimeout(r, 200));
+                
+                // Delete the download
+                const deleteResp = await fetch(`/api/game-downloads/${id}?deleteFile=true`, { method: 'DELETE' });
+                const deleteData = await deleteResp.json();
+                
+                if (!deleteResp.ok || !deleteData.success) {
+                    throw new Error(deleteData.error || 'Delete failed');
+                }
+                
+                // Force a fresh reload of the library
                 await new Promise(r => setTimeout(r, 100));
-                await fetch(`/api/game-downloads/${id}?deleteFile=true`, { method: 'DELETE' });
-                loadGamesLibrary();
+                await loadGamesLibrary();
+                
                 showNotification('Download removed', 'success');
             } catch (e) {
-                showNotification('Failed to remove download', 'error');
+                console.error('[GameDownloads] Remove error:', e);
+                showNotification('Failed to remove download: ' + e.message, 'error');
+                // Reload anyway to sync state
+                await loadGamesLibrary();
             }
         }
         

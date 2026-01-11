@@ -288,6 +288,20 @@
                 </svg>
                 <span class="text-sm font-medium">Manga</span>
             </a>
+            
+            <a href="#" onclick="showSection('mediadownloader'); return false;" class="nav-link flex items-center gap-3 px-3 py-2.5 rounded-lg text-gray-300 hover:text-white hover:bg-white/5 transition-all group">
+                <svg class="w-5 h-5 text-gray-400 group-hover:text-purple-400 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
+                </svg>
+                <span class="text-sm font-medium">Media Downloader</span>
+            </a>
+            
+            <a href="#" onclick="showSection('music'); return false;" class="nav-link flex items-center gap-3 px-3 py-2.5 rounded-lg text-gray-300 hover:text-white hover:bg-white/5 transition-all group">
+                <svg class="w-5 h-5 text-gray-400 group-hover:text-pink-400 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3"/>
+                </svg>
+                <span class="text-sm font-medium">Music</span>
+            </a>
 
             <div class="my-4 border-t border-white/5"></div>
             <p class="text-gray-500 text-[10px] uppercase tracking-wider font-semibold px-3 mb-2">Quick Actions</p>
@@ -832,6 +846,290 @@
         </div>
     </div>
 
+    <!-- Media Downloader Section -->
+    <div id="mediadownloader-section" class="hidden relative z-[70] px-6 min-h-screen pt-32 pointer-events-auto">
+        <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
+            <h2 class="text-2xl font-bold text-white flex items-center gap-3">
+                <span class="w-1 h-6 bg-gradient-to-b from-cyan-500 to-blue-500 rounded-full"></span>
+                Media Downloader
+            </h2>
+            
+            <div class="flex flex-wrap items-center gap-3">
+                <!-- Source Toggle -->
+                <div class="flex items-center bg-gray-800/50 backdrop-blur-sm rounded-full p-1 border border-gray-700/50">
+                    <button id="mdl-111477-btn" class="mdl-source-btn px-4 py-1.5 rounded-full text-sm font-medium transition-all duration-300 bg-cyan-600 text-white shadow-lg shadow-cyan-500/25" data-source="111477">
+                        111477
+                    </button>
+                    <button id="mdl-acermovies-btn" class="mdl-source-btn px-4 py-1.5 rounded-full text-sm font-medium text-gray-400 hover:text-white transition-all duration-300 hover:bg-white/5" data-source="acermovies">
+                        AcerMovies
+                    </button>
+                </div>
+                
+                <!-- Type Toggle (111477 only) -->
+                <div id="mdl-type-toggle" class="flex items-center bg-gray-800/50 backdrop-blur-sm rounded-full p-1 border border-gray-700/50">
+                    <button id="mdl-movies-btn" class="mdl-type-btn px-4 py-1.5 rounded-full text-sm font-medium transition-all duration-300 bg-blue-600 text-white shadow-lg shadow-blue-500/25" data-type="movie">
+                        Movies
+                    </button>
+                    <button id="mdl-tv-btn" class="mdl-type-btn px-4 py-1.5 rounded-full text-sm font-medium text-gray-400 hover:text-white transition-all duration-300 hover:bg-white/5" data-type="tv">
+                        TV Shows
+                    </button>
+                </div>
+                
+                <!-- Search -->
+                <div class="flex items-center bg-gray-800/50 backdrop-blur-sm rounded-full p-1 border border-gray-700/50">
+                    <input type="text" id="mdl-search-input" placeholder="Search..." class="bg-transparent border-none text-sm text-white px-4 py-1.5 w-48 focus:w-64 transition-all focus:ring-0 placeholder-gray-500">
+                    <button id="mdl-search-btn" class="px-3 py-1.5 rounded-full text-gray-400 hover:text-white transition-colors">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+                        </svg>
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <div id="mdl-grid" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
+            <!-- Results will be loaded here -->
+        </div>
+        
+        <div id="mdl-loading" class="hidden flex justify-center py-20">
+            <div class="w-12 h-12 border-4 border-cyan-500/30 border-t-cyan-500 rounded-full animate-spin"></div>
+        </div>
+        
+        <div id="mdl-empty" class="flex flex-col items-center justify-center text-center text-gray-400 py-12">
+            <svg class="w-16 h-16 mx-auto mb-4 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
+            </svg>
+            <p class="text-xl">Search for movies or TV shows to download</p>
+            <p class="text-sm text-gray-500 mt-2">Use the search bar above to find content</p>
+        </div>
+    </div>
+
+    <!-- Music Section -->
+    <div id="music-section" class="hidden relative z-[70] px-6 min-h-screen pt-32 pointer-events-auto">
+        <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
+            <h2 class="text-2xl font-bold text-white flex items-center gap-3">
+                <span class="w-1 h-6 bg-gradient-to-b from-pink-500 to-purple-500 rounded-full"></span>
+                Music
+            </h2>
+            <div class="flex flex-wrap items-center gap-3">
+                <button id="music-my-btn" class="px-4 py-2 rounded-lg bg-pink-600/20 border border-pink-500/30 text-pink-400 hover:bg-pink-600/30 transition-all text-sm font-medium">
+                    <span class="flex items-center gap-2"><svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>My Music</span>
+                </button>
+                <button id="music-my-albums-btn" class="px-4 py-2 rounded-lg bg-blue-600/20 border border-blue-500/30 text-blue-400 hover:bg-blue-600/30 transition-all text-sm font-medium">
+                    <span class="flex items-center gap-2"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" stroke-width="2"/><circle cx="12" cy="12" r="3" stroke-width="2"/></svg>My Albums</span>
+                </button>
+                <button id="music-playlists-btn" class="px-4 py-2 rounded-lg bg-purple-600/20 border border-purple-500/30 text-purple-400 hover:bg-purple-600/30 transition-all text-sm font-medium">
+                    <span class="flex items-center gap-2"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 10h16M4 14h16M4 18h16"/></svg>Playlists</span>
+                </button>
+                <div class="flex items-center bg-gray-800/50 backdrop-blur-sm rounded-full p-1 border border-gray-700/50">
+                    <input type="text" id="music-search-input" placeholder="Search songs, artists..." class="bg-transparent border-none text-sm text-white px-4 py-1.5 w-48 focus:w-64 transition-all focus:ring-0 placeholder-gray-500">
+                    <button id="music-search-btn" class="px-3 py-1.5 rounded-full text-gray-400 hover:text-white transition-colors">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Music Loading -->
+        <div id="music-loading" class="hidden flex justify-center py-20">
+            <div class="w-12 h-12 border-4 border-pink-500/30 border-t-pink-500 rounded-full animate-spin"></div>
+        </div>
+
+        <!-- Music Empty State -->
+        <div id="music-empty" class="flex flex-col items-center justify-center text-center text-gray-400 py-12">
+            <svg class="w-16 h-16 mx-auto mb-4 text-pink-500/50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3"/>
+            </svg>
+            <p class="text-xl">Welcome to Music</p>
+            <p class="text-sm text-gray-500 mt-2">Search for songs, artists, or albums to get started</p>
+        </div>
+
+        <!-- Music Results Grid -->
+        <div id="music-results" class="hidden">
+            <div class="flex items-center justify-between mb-4">
+                <h3 id="music-results-title" class="text-lg font-semibold text-white">Search Results</h3>
+                <span id="music-results-count" class="text-sm text-gray-400"></span>
+            </div>
+            <div id="music-results-grid" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4"></div>
+        </div>
+
+        <!-- My Music Section -->
+        <div id="my-music-section" class="hidden">
+            <div class="flex items-center justify-between mb-4">
+                <h3 class="text-lg font-semibold text-white flex items-center gap-2">
+                    <svg class="w-5 h-5 text-pink-500" fill="currentColor" viewBox="0 0 24 24"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>
+                    My Music
+                </h3>
+                <div class="flex items-center gap-2">
+                    <button id="my-music-play-all" class="px-3 py-1.5 rounded-lg bg-pink-600 hover:bg-pink-500 text-white text-sm font-medium transition-colors">Play All</button>
+                    <button id="my-music-shuffle" class="px-3 py-1.5 rounded-lg bg-gray-700 hover:bg-gray-600 text-white text-sm font-medium transition-colors">Shuffle</button>
+                </div>
+            </div>
+            <div id="my-music-grid" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4"></div>
+            <div id="my-music-empty" class="hidden text-center text-gray-400 py-12">
+                <p>No saved tracks yet. Click the heart on any track to save it here.</p>
+            </div>
+        </div>
+
+        <!-- Playlists Section -->
+        <div id="playlists-section" class="hidden">
+            <div class="flex items-center justify-between mb-4">
+                <h3 class="text-lg font-semibold text-white flex items-center gap-2">
+                    <svg class="w-5 h-5 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 10h16M4 14h16M4 18h16"/></svg>
+                    Playlists
+                </h3>
+                <div class="flex items-center gap-2">
+                    <input id="new-playlist-name" type="text" placeholder="New playlist name" class="px-3 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-white text-sm focus:outline-none focus:border-blue-500">
+                    <button id="create-playlist-btn" class="px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium transition-colors">Create</button>
+                </div>
+            </div>
+            <div id="playlists-grid" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4"></div>
+            <div id="playlists-empty" class="hidden text-center text-gray-400 py-12">
+                <p>No playlists yet. Create one to get started.</p>
+            </div>
+        </div>
+
+        <!-- Playlist View (when viewing a specific playlist) -->
+        <div id="playlist-view" class="hidden">
+            <div class="flex items-center justify-between mb-4">
+                <div class="flex items-center gap-3">
+                    <button id="playlist-back-btn" class="p-2 rounded-lg bg-gray-800 hover:bg-gray-700 text-white transition-colors">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
+                    </button>
+                    <h3 id="playlist-view-title" class="text-lg font-semibold text-white"></h3>
+                </div>
+                <div class="flex items-center gap-2">
+                    <button id="playlist-play-all" class="px-3 py-1.5 rounded-lg bg-pink-600 hover:bg-pink-500 text-white text-sm font-medium transition-colors">Play All</button>
+                    <button id="playlist-shuffle" class="px-3 py-1.5 rounded-lg bg-gray-700 hover:bg-gray-600 text-white text-sm font-medium transition-colors">Shuffle</button>
+                    <button id="playlist-delete-btn" class="px-3 py-1.5 rounded-lg bg-red-600/20 hover:bg-red-600/30 text-red-400 text-sm font-medium transition-colors">Delete</button>
+                </div>
+            </div>
+            <div id="playlist-tracks-grid" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4"></div>
+            <div id="playlist-empty" class="hidden text-center text-gray-400 py-12">
+                <p>This playlist is empty. Add tracks from search results.</p>
+            </div>
+        </div>
+
+        <!-- Album View -->
+        <div id="album-view" class="hidden">
+            <div class="flex flex-col md:flex-row md:items-start gap-6 mb-6">
+                <div class="flex items-center gap-4">
+                    <button id="album-back-btn" class="p-2 rounded-lg bg-gray-800 hover:bg-gray-700 text-white transition-colors">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
+                    </button>
+                    <img id="album-view-cover" src="" alt="Album Cover" class="w-24 h-24 rounded-xl object-cover shadow-lg bg-gray-800">
+                    <div>
+                        <h3 id="album-view-title" class="text-xl font-bold text-white"></h3>
+                        <p id="album-view-artist" class="text-sm text-gray-400"></p>
+                    </div>
+                </div>
+                <div class="flex items-center gap-2 md:ml-auto">
+                    <button id="album-play-all" class="px-4 py-2 rounded-lg bg-pink-600 hover:bg-pink-500 text-white text-sm font-medium transition-colors flex items-center gap-2">
+                        <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+                        Play All
+                    </button>
+                    <button id="album-shuffle" class="px-4 py-2 rounded-lg bg-gray-700 hover:bg-gray-600 text-white text-sm font-medium transition-colors flex items-center gap-2">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+                        Shuffle
+                    </button>
+                    <button id="album-save-btn" class="px-4 py-2 rounded-lg bg-blue-600/20 border border-blue-500/30 text-blue-400 hover:bg-blue-600/30 text-sm font-medium transition-colors flex items-center gap-2">
+                        <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>
+                        Save Album
+                    </button>
+                </div>
+            </div>
+            <div id="album-tracks-grid" class="space-y-2"></div>
+        </div>
+
+        <!-- My Albums Section -->
+        <div id="my-albums-section" class="hidden">
+            <div class="flex items-center justify-between mb-4">
+                <h3 class="text-lg font-semibold text-white flex items-center gap-2">
+                    <svg class="w-5 h-5 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <circle cx="12" cy="12" r="10" stroke-width="2"/>
+                        <circle cx="12" cy="12" r="3" stroke-width="2"/>
+                    </svg>
+                    My Albums
+                </h3>
+            </div>
+            <div id="my-albums-grid" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4"></div>
+            <div id="my-albums-empty" class="hidden text-center text-gray-400 py-12">
+                <p>No saved albums yet. Click the heart on any album to save it here.</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Media Downloader Details Modal -->
+    <div id="mdl-details-modal" class="fixed inset-0 z-[400] flex items-center justify-center bg-black/80 backdrop-blur-sm hidden p-4">
+        <div class="bg-gray-900 border border-gray-700 rounded-2xl w-full max-w-4xl max-h-[90vh] overflow-hidden shadow-2xl flex flex-col">
+            <div class="p-4 border-b border-gray-700 flex items-center justify-between">
+                <div class="flex items-center gap-4">
+                    <img id="mdl-modal-poster" src="" alt="" class="w-20 h-28 rounded-lg object-cover bg-gray-800">
+                    <div>
+                        <h3 id="mdl-modal-title" class="text-xl font-bold text-white"></h3>
+                        <p id="mdl-modal-info" class="text-sm text-gray-400"></p>
+                    </div>
+                </div>
+                <button id="mdl-modal-close" class="w-10 h-10 rounded-full bg-gray-800 hover:bg-red-500 flex items-center justify-center text-gray-400 hover:text-white transition-colors">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+                </button>
+            </div>
+            
+            <!-- Season/Episode Selector (TV Shows only) -->
+            <div id="mdl-episode-selector" class="hidden p-4 border-b border-gray-700 bg-gray-800/50">
+                <div class="flex flex-wrap items-center gap-4">
+                    <div class="flex items-center gap-2">
+                        <label class="text-sm text-gray-400">Season:</label>
+                        <select id="mdl-season-select" class="bg-gray-800 border border-gray-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-cyan-500">
+                        </select>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <label class="text-sm text-gray-400">Episode:</label>
+                        <select id="mdl-episode-select" class="bg-gray-800 border border-gray-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-cyan-500">
+                        </select>
+                    </div>
+                    <button id="mdl-fetch-episode-btn" class="px-4 py-2 bg-cyan-600 hover:bg-cyan-500 text-white text-sm font-bold rounded-lg transition-colors">
+                        Fetch Episode
+                    </button>
+                </div>
+            </div>
+            
+            <div id="mdl-files-list" class="flex-1 overflow-y-auto p-4 space-y-3 custom-scrollbar">
+                <!-- Files will be loaded here -->
+            </div>
+            
+            <div id="mdl-files-loading" class="hidden flex justify-center py-10">
+                <div class="w-10 h-10 border-4 border-cyan-500/30 border-t-cyan-500 rounded-full animate-spin"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- AcerMovies Quality Modal -->
+    <div id="acer-quality-modal" class="fixed inset-0 z-[400] flex items-center justify-center bg-black/80 backdrop-blur-sm hidden p-4">
+        <div class="bg-gray-900 border border-gray-700 rounded-2xl w-full max-w-3xl max-h-[90vh] overflow-hidden shadow-2xl flex flex-col">
+            <div class="p-4 border-b border-gray-700 flex items-center justify-between">
+                <div class="flex items-center gap-4">
+                    <img id="acer-modal-poster" src="" alt="" class="w-16 h-24 rounded-lg object-cover bg-gray-800">
+                    <div>
+                        <h3 id="acer-modal-title" class="text-lg font-bold text-white"></h3>
+                        <p id="acer-modal-info" class="text-sm text-gray-400"></p>
+                    </div>
+                </div>
+                <button id="acer-modal-close" class="w-10 h-10 rounded-full bg-gray-800 hover:bg-red-500 flex items-center justify-center text-gray-400 hover:text-white transition-colors">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+                </button>
+            </div>
+            
+            <div id="acer-quality-list" class="flex-1 overflow-y-auto p-4 space-y-3 custom-scrollbar">
+                <!-- Quality options will be loaded here -->
+            </div>
+            
+            <div id="acer-quality-loading" class="hidden flex justify-center py-10">
+                <div class="w-10 h-10 border-4 border-cyan-500/30 border-t-cyan-500 rounded-full animate-spin"></div>
+            </div>
+        </div>
+    </div>
+
     <!-- Manga Chapters Modal -->
     <div id="manga-chapters-modal" class="fixed inset-0 z-[400] flex items-center justify-center bg-black/80 backdrop-blur-sm hidden p-4">
         <div class="bg-gray-900 border border-gray-700 rounded-2xl w-full max-w-2xl max-h-[90vh] overflow-hidden shadow-2xl flex flex-col">
@@ -943,6 +1241,107 @@
             
             <!-- Hidden Audio Element -->
             <audio id="audiobook-audio" preload="auto"></audio>
+        </div>
+    </div>
+
+    <!-- Music Player Modal -->
+    <div id="music-player-modal" class="fixed inset-0 z-[500] flex items-center justify-center bg-black/80 backdrop-blur-sm hidden p-4">
+        <div class="bg-gray-900 border border-pink-500/30 rounded-2xl w-full max-w-md shadow-2xl">
+            <div class="p-4 border-b border-gray-700 flex items-center justify-between">
+                <h3 class="text-lg font-bold text-white">Now Playing</h3>
+                <div class="flex items-center gap-2">
+                    <button id="music-player-minimize" class="w-8 h-8 rounded-full bg-gray-800 hover:bg-gray-700 flex items-center justify-center text-gray-400 hover:text-white transition-colors">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 12H4"/></svg>
+                    </button>
+                    <button id="music-player-close" class="w-8 h-8 rounded-full bg-gray-800 hover:bg-red-500 flex items-center justify-center text-gray-400 hover:text-white transition-colors">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+                    </button>
+                </div>
+            </div>
+            <div class="p-6 flex flex-col items-center">
+                <img id="music-player-cover" src="" alt="Album Cover" class="w-48 h-48 rounded-xl object-cover mb-4 shadow-lg bg-gray-800">
+                <h4 id="music-player-title" class="text-lg font-bold text-white text-center mb-1"></h4>
+                <p id="music-player-artist" class="text-sm text-pink-400 text-center mb-4"></p>
+                
+                <!-- Progress Bar -->
+                <div class="w-full mb-2">
+                    <div id="music-progress-bar" class="h-2 bg-gray-700 rounded-full cursor-pointer relative">
+                        <div id="music-progress-fill" class="h-full bg-gradient-to-r from-pink-500 to-purple-500 rounded-full" style="width: 0%"></div>
+                    </div>
+                    <div class="flex justify-between text-xs text-gray-400 mt-1">
+                        <span id="music-current-time">0:00</span>
+                        <span id="music-total-time">0:00</span>
+                    </div>
+                </div>
+                
+                <!-- Controls -->
+                <div class="flex items-center justify-center gap-4 mt-2">
+                    <button id="music-prev-btn" class="w-10 h-10 rounded-full bg-gray-800 hover:bg-gray-700 flex items-center justify-center text-white transition-colors">
+                        <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M6 6h2v12H6zm3.5 6l8.5 6V6z"/></svg>
+                    </button>
+                    <button id="music-play-pause-btn" class="w-14 h-14 rounded-full bg-pink-600 hover:bg-pink-500 flex items-center justify-center text-white transition-colors">
+                        <svg id="music-play-icon" class="w-6 h-6" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+                        <svg id="music-pause-icon" class="w-6 h-6 hidden" fill="currentColor" viewBox="0 0 24 24"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>
+                    </button>
+                    <button id="music-next-btn" class="w-10 h-10 rounded-full bg-gray-800 hover:bg-gray-700 flex items-center justify-center text-white transition-colors">
+                        <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/></svg>
+                    </button>
+                </div>
+                
+                <!-- Volume -->
+                <div class="flex items-center gap-2 mt-4 w-full">
+                    <svg class="w-4 h-4 text-gray-400" fill="currentColor" viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02z"/></svg>
+                    <div id="music-volume-bar" class="flex-1 h-2 bg-gray-700 rounded-full cursor-pointer relative">
+                        <div id="music-volume-fill" class="h-full bg-pink-500 rounded-full" style="width: 100%"></div>
+                    </div>
+                </div>
+            </div>
+            <audio id="music-audio" preload="auto"></audio>
+        </div>
+    </div>
+
+    <!-- Mini Music Player -->
+    <div id="music-mini-player" class="fixed bottom-4 right-4 z-[600] bg-gray-900 border border-pink-500/30 rounded-xl p-3 shadow-2xl hidden" style="width: 320px;">
+        <div class="flex items-center gap-3">
+            <img id="mini-player-cover" src="" alt="" class="w-12 h-12 rounded-lg object-cover bg-gray-800">
+            <div class="flex-1 min-w-0">
+                <p id="mini-player-title" class="text-sm font-medium text-white truncate"></p>
+                <p id="mini-player-artist" class="text-xs text-pink-400 truncate"></p>
+            </div>
+            <div class="flex items-center gap-1">
+                <button id="mini-play-pause-btn" class="w-8 h-8 rounded-full bg-pink-600 hover:bg-pink-500 flex items-center justify-center text-white transition-colors">
+                    <svg id="mini-play-icon" class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+                    <svg id="mini-pause-icon" class="w-4 h-4 hidden" fill="currentColor" viewBox="0 0 24 24"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>
+                </button>
+                <button id="mini-player-expand" class="w-8 h-8 rounded-full bg-gray-800 hover:bg-gray-700 flex items-center justify-center text-gray-400 hover:text-white transition-colors">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4"/></svg>
+                </button>
+            </div>
+        </div>
+        <div id="mini-progress-bar" class="h-1 bg-gray-700 rounded-full mt-2 cursor-pointer">
+            <div id="mini-progress-fill" class="h-full bg-pink-500 rounded-full" style="width: 0%"></div>
+        </div>
+    </div>
+
+    <!-- Playlist Chooser Modal -->
+    <div id="music-playlist-chooser" class="fixed inset-0 z-[550] flex items-center justify-center bg-black/80 backdrop-blur-sm hidden p-4">
+        <div class="bg-gray-900 border border-blue-500/30 rounded-2xl w-full max-w-sm shadow-2xl">
+            <div class="p-4 border-b border-gray-700 flex items-center justify-between">
+                <h3 class="text-lg font-bold text-white">Add to Playlist</h3>
+                <button id="playlist-chooser-close" class="w-8 h-8 rounded-full bg-gray-800 hover:bg-red-500 flex items-center justify-center text-gray-400 hover:text-white transition-colors">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+                </button>
+            </div>
+            <div class="p-4">
+                <div class="flex gap-2 mb-4">
+                    <input id="chooser-new-playlist" type="text" placeholder="New playlist name" class="flex-1 px-3 py-2 rounded-lg bg-gray-800 border border-gray-700 text-white text-sm focus:outline-none focus:border-blue-500">
+                    <button id="chooser-create-btn" class="px-3 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium transition-colors">Create</button>
+                </div>
+                <div id="playlist-chooser-list" class="space-y-2 max-h-60 overflow-y-auto"></div>
+                <div id="playlist-chooser-empty" class="hidden text-center text-gray-400 py-4 text-sm">
+                    No playlists yet. Create one above.
+                </div>
+            </div>
         </div>
     </div>
 

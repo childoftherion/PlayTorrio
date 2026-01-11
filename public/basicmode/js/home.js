@@ -16,6 +16,8 @@ import { initComics } from './comics.js';
 import { initBooks } from './books.js';
 import { initAudiobooks } from './audiobooks.js';
 import { initManga } from './manga.js';
+import { initMediaDownloader } from './mediadownloader.js';
+import { initMusic } from './music.js';
 import { initDebridUI, initNodeMPVUI, initSponsorUI, loadSponsorVisibility, initTorrentEngineUI } from './debrid.js';
 
 // DOM Elements
@@ -74,6 +76,8 @@ window.showSection = (section) => {
     const audiobooksSection = document.getElementById('audiobooks-section');
     const iptvSection = document.getElementById('iptv-section');
     const mangaSection = document.getElementById('manga-section');
+    const mediadownloaderSection = document.getElementById('mediadownloader-section');
+    const musicSection = document.getElementById('music-section');
     const iptvIframe = document.getElementById('iptv-iframe');
     const mainSearchContainer = searchInput ? searchInput.closest('.flex.flex-col') : null;
     
@@ -85,6 +89,8 @@ window.showSection = (section) => {
     if (audiobooksSection) audiobooksSection.classList.add('hidden');
     if (iptvSection) iptvSection.classList.add('hidden');
     if (mangaSection) mangaSection.classList.add('hidden');
+    if (mediadownloaderSection) mediadownloaderSection.classList.add('hidden');
+    if (musicSection) musicSection.classList.add('hidden');
     if (searchResultsContainer) searchResultsContainer.classList.add('hidden');
     if (genresSection) genresSection.classList.add('hidden');
     if (catalogsSection) catalogsSection.classList.add('hidden');
@@ -157,6 +163,20 @@ window.showSection = (section) => {
             initManga();
         }
         activateNavLink('.nav-link[onclick*="manga"]');
+    } else if (section === 'mediadownloader') {
+        const mediadownloaderSection = document.getElementById('mediadownloader-section');
+        if (mediadownloaderSection) {
+            mediadownloaderSection.classList.remove('hidden');
+            initMediaDownloader();
+        }
+        activateNavLink('.nav-link[onclick*="mediadownloader"]');
+    } else if (section === 'music') {
+        const musicSection = document.getElementById('music-section');
+        if (musicSection) {
+            musicSection.classList.remove('hidden');
+            initMusic();
+        }
+        activateNavLink('.nav-link[onclick*="music"]');
     }
 };
 

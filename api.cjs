@@ -2015,6 +2015,8 @@ app.get('/api/xdmovies/:tmdbid', async (req, res) => {
 // ACERMOVIES SERVICE
 // ============================================================================
 
+const ACERMOVIES_BASE_URL = "https://api.acermovies.fun";
+
 // Simple helper: safe JSON fetch with good error output
 async function acermovies_postJson(url, payload) {
     let lastError;
@@ -2024,7 +2026,9 @@ async function acermovies_postJson(url, payload) {
                 headers: {
                     "Content-Type": "application/json",
                     "Accept": "application/json",
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+                    "Origin": "https://acermovies.fun",
+                    "Referer": "https://acermovies.fun/"
                 },
                 timeout: 0
             });
@@ -2048,7 +2052,7 @@ app.get('/api/acermovies/search/:query', async (req, res) => {
     const query = decodeURIComponent(req.params.query || "").trim();
     if (!query) return res.status(400).json({ error: "Missing search query" });
 
-    const data = await acermovies_postJson("https://acermovies.val.run/api/search", {
+    const data = await acermovies_postJson(`${ACERMOVIES_BASE_URL}/api/search`, {
       searchQuery: query
     });
 
@@ -2070,7 +2074,7 @@ app.get('/api/acermovies/sourceQuality', async (req, res) => {
     const url = (req.query.url || "").trim();
     if (!url) return res.status(400).json({ error: "Missing url" });
 
-    const data = await acermovies_postJson("https://acermovies.val.run/api/sourceQuality", {
+    const data = await acermovies_postJson(`${ACERMOVIES_BASE_URL}/api/sourceQuality`, {
       url
     });
 
@@ -2092,7 +2096,7 @@ app.get('/api/acermovies/sourceEpisodes', async (req, res) => {
     const url = (req.query.url || "").trim();
     if (!url) return res.status(400).json({ error: "Missing url" });
 
-    const data = await acermovies_postJson("https://acermovies.val.run/api/sourceEpisodes", {
+    const data = await acermovies_postJson(`${ACERMOVIES_BASE_URL}/api/sourceEpisodes`, {
       url
     });
 
@@ -2116,7 +2120,7 @@ app.get('/api/acermovies/sourceUrl', async (req, res) => {
 
     if (!url) return res.status(400).json({ error: "Missing url" });
 
-    const data = await acermovies_postJson("https://acermovies.val.run/api/sourceUrl", {
+    const data = await acermovies_postJson(`${ACERMOVIES_BASE_URL}/api/sourceUrl`, {
       url,
       seriesType
     });
