@@ -191,6 +191,8 @@
     "dmg": {
       "title": "${productName}",
       "icon": "build/icon.icns",
+      "background": null,
+      "backgroundColor": "#ffffff",
       "contents": [
         {
           "x": 130,
