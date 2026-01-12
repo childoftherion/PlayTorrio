@@ -266,6 +266,8 @@ body {
         height: auto !important;
         min-height: 60vh;
         max-height: none;
+        overflow-y: auto !important;
+        overflow-x: hidden !important;
     }
     
     /* Make addon tabs scrollable horizontally */
@@ -297,6 +299,11 @@ body {
 
 /* Desktop - ensure sources list is scrollable */
 @media (min-width: 1025px) {
+    #right-panel-anim-target {
+        overflow-y: auto !important;
+        overflow-x: hidden !important;
+    }
+    
     #sources-list {
         max-height: calc(100vh - 380px);
         min-height: 320px;
@@ -308,7 +315,6 @@ body {
         flex-direction: column;
         flex: 1;
         min-height: 0;
-        overflow: hidden;
     }
     
     #torrent-sources-section {
@@ -316,7 +322,6 @@ body {
         flex-direction: column;
         flex: 1;
         min-height: 0;
-        overflow: hidden;
     }
 }
 
@@ -659,53 +664,23 @@ body.sidebar-collapsed #main-content {
 #embedded-servers-section {
     display: flex;
     flex-direction: column;
-    min-height: 600px;
 }
 
 #embedded-player-container {
     flex: 1;
-    display: flex;
-    flex-direction: column;
 }
 
 #embedded-player-container > div {
-    flex: 1;
-    min-height: 450px !important;
-    height: auto;
+    overflow: visible !important;
 }
 
 #embedded-player-iframe {
-    min-height: 450px !important;
+    border: none;
 }
 
 /* Episode grid - limit to 2 rows */
 #episode-grid {
     max-height: 180px !important;
-}
-
-@media (min-width: 1024px) {
-    #embedded-servers-section {
-        min-height: 70vh;
-    }
-    
-    #embedded-player-container > div {
-        min-height: 500px !important;
-        height: calc(100vh - 350px);
-    }
-    
-    #embedded-player-iframe {
-        min-height: 500px !important;
-    }
-}
-
-@media (max-width: 1023px) {
-    #embedded-player-container > div {
-        min-height: 400px !important;
-    }
-    
-    #embedded-player-iframe {
-        min-height: 400px !important;
-    }
 }
 
 
