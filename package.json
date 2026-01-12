@@ -134,14 +134,8 @@
       "icon": "build/icon.icns",
       "category": "public.app-category.entertainment",
       "target": [
-        {
-          "target": "dmg",
-          "arch": ["x64", "arm64"]
-        },
-        {
-          "target": "zip",
-          "arch": ["x64", "arm64"]
-        }
+        "dmg",
+        "zip"
       ],
       "files": [
         "macyt/**"
