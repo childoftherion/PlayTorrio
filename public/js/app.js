@@ -146,6 +146,27 @@ async function handleRouteChange() {
         return;
     }
     
+    // Handle catalog browse pages (e.g., #/catalog?addon=...&catalog=...)
+    if (hash.startsWith('#/catalog?')) {
+        console.log('[App] Catalog browse route detected');
+        const catalogParams = new URLSearchParams(hash.substring(hash.indexOf('?')));
+        const addonId = catalogParams.get('addon');
+        const catalogId = catalogParams.get('catalog');
+        const catalogType = catalogParams.get('type');
+        const catalogName = decodeURIComponent(catalogParams.get('name') || 'Catalog');
+        
+        console.log('[App] Catalog params:', { addonId, catalogId, catalogType, catalogName });
+        
+        showPage('catalogBrowsePage');
+        if (typeof initializeCatalogBrowse === 'function') {
+            console.log('[App] Calling initializeCatalogBrowse');
+            await initializeCatalogBrowse(addonId, catalogId, catalogType, catalogName);
+        } else {
+            console.error('[App] initializeCatalogBrowse function not found!');
+        }
+        return;
+    }
+    
     // Show the appropriate page based on hash and initialize if needed
     switch (hash) {
         case '#/':
@@ -156,6 +177,16 @@ async function handleRouteChange() {
             showPage('genresPage');
             if (typeof ensureGenresLoaded === 'function') await ensureGenresLoaded();
             if (typeof renderGenres === 'function') renderGenres();
+            break;
+        case '#/catalogs':
+            console.log('[App] Showing catalogs page');
+            showPage('catalogsPage');
+            if (typeof initializeCatalogs === 'function') {
+                console.log('[App] Calling initializeCatalogs');
+                await initializeCatalogs();
+            } else {
+                console.error('[App] initializeCatalogs function not found!');
+            }
             break;
         case '#/my-list':
             showPage('myListPage');

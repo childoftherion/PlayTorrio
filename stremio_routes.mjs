@@ -3,7 +3,7 @@
  * Fast torrent streaming using Stremio's engine
  */
 
-import * as StremioEngine from './stremio_engine.mjs';
+import * as StremioEngine from './engine/stremio/stremio_engine.mjs';
 import fetch from 'node-fetch';
 
 const selectedFiles = new Map();

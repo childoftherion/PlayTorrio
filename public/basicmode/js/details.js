@@ -14,6 +14,15 @@ import {
 import { searchJackett, getJackettKey, setJackettKey, getJackettSettings } from './jackett.js';
 import { getInstalledAddons, installAddon, removeAddon, fetchAddonStreams, parseAddonStream } from './addons.js';
 import { initDebridUI, initNodeMPVUI, getDebridSettings } from './debrid.js';
+import { 
+    fetchStremioMeta, 
+    fetchStremioStreams, 
+    parseStremioStream, 
+    isStremioAddonId,
+    extractAddonUrl,
+    formatStremioMeta,
+    getVideoId
+} from './stremio-addon.js';
 
 // Helper functions for parsing torrent/stream info
 const detectQuality = (title) => {
@@ -75,7 +84,8 @@ let currentSeason = 1;
 let currentEpisode = null;
 let currentImdbId = null;
 let allSources = [];
-let currentProvider = 'jackett';
+// Set default provider - if addonId is in URL, use that, otherwise default to jackett
+let currentProvider = addonId || 'jackett';
 
 // DOM Elements
 const loadingOverlay = document.getElementById('loading-overlay');
@@ -468,8 +478,14 @@ const renderAddonTabs = async () => {
     jackettTab.className = `px-4 py-1.5 rounded-full text-xs font-bold transition-all ${currentProvider === 'jackett' ? 'bg-purple-600 text-white shadow-lg' : 'bg-gray-800 text-gray-400 hover:text-white'}`;
     jackettTab.textContent = 'Jackett';
     jackettTab.onclick = async () => {
+        console.log('[AddonTabs] Jackett clicked');
         currentProvider = 'jackett';
-        await renderAddonTabs();
+        document.querySelectorAll('#addon-tabs button').forEach(btn => {
+            btn.classList.remove('bg-purple-600', 'text-white', 'shadow-lg');
+            btn.classList.add('bg-gray-800', 'text-gray-400');
+        });
+        jackettTab.classList.remove('bg-gray-800', 'text-gray-400');
+        jackettTab.classList.add('bg-purple-600', 'text-white', 'shadow-lg');
         await renderSources();
     };
     addonTabsContainer.appendChild(jackettTab);
@@ -479,8 +495,14 @@ const renderAddonTabs = async () => {
     tab111477.className = `px-4 py-1.5 rounded-full text-xs font-bold transition-all ${currentProvider === '111477' ? 'bg-purple-600 text-white shadow-lg' : 'bg-gray-800 text-gray-400 hover:text-white'}`;
     tab111477.textContent = '111477';
     tab111477.onclick = async () => {
+        console.log('[AddonTabs] 111477 clicked');
         currentProvider = '111477';
-        await renderAddonTabs();
+        document.querySelectorAll('#addon-tabs button').forEach(btn => {
+            btn.classList.remove('bg-purple-600', 'text-white', 'shadow-lg');
+            btn.classList.add('bg-gray-800', 'text-gray-400');
+        });
+        tab111477.classList.remove('bg-gray-800', 'text-gray-400');
+        tab111477.classList.add('bg-purple-600', 'text-white', 'shadow-lg');
         await renderSources();
     };
     addonTabsContainer.appendChild(tab111477);
@@ -490,8 +512,14 @@ const renderAddonTabs = async () => {
     torrentlessTab.className = `px-4 py-1.5 rounded-full text-xs font-bold transition-all ${currentProvider === 'torrentless' ? 'bg-purple-600 text-white shadow-lg' : 'bg-gray-800 text-gray-400 hover:text-white'}`;
     torrentlessTab.textContent = 'PlayTorrio';
     torrentlessTab.onclick = async () => {
+        console.log('[AddonTabs] PlayTorrio clicked');
         currentProvider = 'torrentless';
-        await renderAddonTabs();
+        document.querySelectorAll('#addon-tabs button').forEach(btn => {
+            btn.classList.remove('bg-purple-600', 'text-white', 'shadow-lg');
+            btn.classList.add('bg-gray-800', 'text-gray-400');
+        });
+        torrentlessTab.classList.remove('bg-gray-800', 'text-gray-400');
+        torrentlessTab.classList.add('bg-purple-600', 'text-white', 'shadow-lg');
         await renderSources();
     };
     addonTabsContainer.appendChild(torrentlessTab);
@@ -514,8 +542,14 @@ const renderAddonTabs = async () => {
         tab.appendChild(nameSpan);
 
         tab.onclick = async () => {
+            console.log('[AddonTabs] Addon clicked:', addonId);
             currentProvider = addonId;
-            await renderAddonTabs();
+            document.querySelectorAll('#addon-tabs button').forEach(btn => {
+                btn.classList.remove('bg-purple-600', 'text-white', 'shadow-lg');
+                btn.classList.add('bg-gray-800', 'text-gray-400');
+            });
+            tab.classList.remove('bg-gray-800', 'text-gray-400');
+            tab.classList.add('bg-purple-600', 'text-white', 'shadow-lg');
             await renderSources();
         };
         addonTabsContainer.appendChild(tab);
@@ -1067,24 +1101,52 @@ const renderSources = async () => {
     try {
         if (currentProvider === 'jackett') {
             let queries = [];
-            const metadata = { title: currentDetails.title || currentDetails.name, type: type, year: (currentDetails.release_date || currentDetails.first_air_date || '').split('-')[0] };
+            const title = currentDetails.title || currentDetails.name;
+            
+            // Extract year from release_date or first_air_date
+            let year = '';
+            if (currentDetails.release_date) {
+                year = String(currentDetails.release_date).split('-')[0];
+            } else if (currentDetails.first_air_date) {
+                year = String(currentDetails.first_air_date).split('-')[0];
+            } else if (currentDetails.releaseInfo) {
+                // For custom addon items that might have releaseInfo
+                year = String(currentDetails.releaseInfo).match(/\d{4}/)?.[0] || '';
+            }
+            
+            const metadata = { 
+                title: title, 
+                type: type, 
+                year: year 
+            };
+            
+            console.log('[Jackett] Searching for:', { title, year, type, isTV });
+            
             if (isTV) {
                 const s = String(currentSeason).padStart(2, '0');
                 metadata.season = currentSeason;
                 if (currentEpisode) {
                     const e = String(currentEpisode).padStart(2, '0');
-                    queries.push(`${currentDetails.name} S${s}E${e}`);
-                    queries.push(`${currentDetails.name} S${s}`);
+                    queries.push(`${title} S${s}E${e}`);
+                    queries.push(`${title} S${s}`);
                     metadata.episode = currentEpisode;
                 } else {
-                    queries.push(`${currentDetails.name} S${s}`);
+                    queries.push(`${title} S${s}`);
                     metadata.episode = null;
                 }
             } else {
-                queries.push(`${currentDetails.title} ${metadata.year}`);
+                // For movies, try with and without year
+                if (year) {
+                    queries.push(`${title} ${year}`);
+                }
+                queries.push(title); // Also try without year
             }
+            
+            console.log('[Jackett] Queries:', queries);
+            
             try {
                 allSources = await searchJackett(queries, metadata);
+                console.log('[Jackett] Found sources:', allSources.length);
             } catch (err) {
                 if (err.message === 'JACKETT_CONNECTION_ERROR') {
                     sourcesList.innerHTML = `
@@ -1270,6 +1332,13 @@ const renderSources = async () => {
             }
         } else {
             console.log(`[Sources] Fetching for addon provider: ${currentProvider}`);
+            console.log('[Sources] currentDetails:', { 
+                hasStremioMeta: !!currentDetails._stremioMeta, 
+                hasAddonUrl: !!currentDetails._addonUrl,
+                addonId: currentDetails._addonId,
+                id: currentDetails.id
+            });
+            
             const addons = await getInstalledAddons();
             const addon = addons.find(a => (a.manifest?.id || a.id) === currentProvider);
             
@@ -1283,31 +1352,131 @@ const renderSources = async () => {
             console.log('[Sources] Found addon:', addon.manifest?.name || addon.name);
 
             try {
-                const imdbId = currentImdbId;
+                // Check if this is a custom Stremio addon ID (not TMDB/IMDB)
+                const isCustomId = isStremioAddonId(id);
                 
-                if (imdbId) {
-                    let stremioId = isTV 
-                        ? (currentEpisode ? `${imdbId}:${currentSeason}:${currentEpisode}` : `${imdbId}:${currentSeason}:1`) 
-                        : imdbId;
+                if (isCustomId || (currentDetails._stremioMeta && currentDetails._addonUrl)) {
+                    console.log('[Sources] Using Stremio protocol for custom ID...');
+                    
+                    // Get addon URL
+                    let addonBaseUrl = currentDetails._addonUrl;
+                    if (!addonBaseUrl) {
+                        addonBaseUrl = addon.url.replace('/manifest.json', '');
+                        if (addonBaseUrl.endsWith('/')) addonBaseUrl = addonBaseUrl.slice(0, -1);
+                    }
+                    
+                    // Get or construct video ID
+                    let videoId;
+                    if (currentDetails._stremioMeta) {
+                        videoId = getVideoId(
+                            currentDetails._stremioMeta,
+                            isTV ? currentSeason : null,
+                            isTV ? currentEpisode : null
+                        );
+                    } else {
+                        // Construct video ID from current state
+                        if (isTV && currentEpisode) {
+                            videoId = `${id}:${currentSeason}:${currentEpisode}`;
+                        } else {
+                            videoId = id;
+                        }
+                    }
+                    
+                    console.log('[Sources] Video ID:', videoId);
+                    console.log('[Sources] Addon URL:', addonBaseUrl);
+                    
+                    // Use the stored Stremio type or convert from current type
+                    const stremioType = currentDetails._stremioType || (type === 'tv' ? 'series' : type);
+                    console.log('[Sources] Stremio type:', stremioType);
+                    console.log('[Sources] Full stream URL will be:', `${addonBaseUrl}/stream/${stremioType}/${videoId}.json`);
+                    
+                    try {
+                        const streams = await fetchStremioStreams(
+                            addonBaseUrl,
+                            stremioType,
+                            videoId
+                        );
                         
-                    console.log(`[Sources] Constructed Stremio ID: ${stremioId} (isTV: ${isTV})`);
-                    
-                    const resourceType = isTV ? 'series' : 'movie';
-                    console.log(`[Sources] Calling fetchAddonStreams with type=${resourceType}, id=${stremioId}`);
-                    
-                    const streams = await fetchAddonStreams(addon, resourceType, stremioId);
-                    console.log(`[Sources] fetchAddonStreams returned ${streams.length} items`);
-                    
-                    const addonName = addon.manifest?.name || addon.name;
-                    allSources = streams.map(s => parseAddonStream(s, addonName));
-                    
-                    if (allSources.length === 0) {
-                        console.warn('[Sources] No streams found from addon.');
+                        console.log('[Sources] Got Stremio streams:', streams.length);
+                        
+                        allSources = streams.map(stream => {
+                            const parsed = parseStremioStream(stream);
+                            const addonName = addon.manifest?.name || addon.name;
+                            
+                            return {
+                                title: parsed.title,
+                                quality: parsed.quality || 'Unknown',
+                                codec: 'Unknown',
+                                size: 'N/A',
+                                sizeBytes: 0,
+                                seeders: 0,
+                                indexer: addonName,
+                                link: parsed.type === 'url' ? parsed.url : null,
+                                magnet: parsed.type === 'torrent' ? parsed.url : null,
+                                url: parsed.url,
+                                streamType: parsed.type,
+                                hdr: false
+                            };
+                        });
+                        
+                        if (allSources.length === 0) {
+                            console.warn('[Sources] No streams found from Stremio addon.');
+                        }
+                    } catch (streamError) {
+                        console.error('[Sources] Stream fetch error:', streamError);
+                        
+                        // Check if it's an authentication error
+                        if (streamError.message.includes('500') || streamError.message.includes('handler error')) {
+                            sourcesList.innerHTML = `
+                                <div class="col-span-full text-center py-12 px-6">
+                                    <div class="w-16 h-16 bg-yellow-500/10 rounded-full flex items-center justify-center mx-auto mb-4">
+                                        <svg class="w-8 h-8 text-yellow-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                                        </svg>
+                                    </div>
+                                    <h3 class="text-white font-bold text-lg mb-2">Addon Configuration Required</h3>
+                                    <p class="text-gray-400 text-sm max-w-md mx-auto mb-4">
+                                        This addon requires authentication or configuration to access streams. 
+                                        Please configure the addon in Stremio with your credentials.
+                                    </p>
+                                    <p class="text-gray-500 text-xs">
+                                        Some addons (like Hanime) require you to enter your account credentials 
+                                        in the addon settings before streams can be accessed.
+                                    </p>
+                                </div>`;
+                            return;
+                        }
+                        
+                        throw streamError; // Re-throw other errors
                     }
                 } else {
-                    console.warn('[Sources] No IMDB ID found in external_ids response for this TMDB ID.');
-                    sourcesList.innerHTML = '<div class="text-center py-12 text-gray-500">No IMDB ID found. Cannot fetch from Stremio addons.</div>';
-                    return;
+                    // Standard IMDB-based addon stream fetching
+                    const imdbId = currentImdbId;
+                    
+                    if (imdbId) {
+                        let stremioId = isTV 
+                            ? (currentEpisode ? `${imdbId}:${currentSeason}:${currentEpisode}` : `${imdbId}:${currentSeason}:1`) 
+                            : imdbId;
+                            
+                        console.log(`[Sources] Constructed Stremio ID: ${stremioId} (isTV: ${isTV})`);
+                        
+                        const resourceType = isTV ? 'series' : 'movie';
+                        console.log(`[Sources] Calling fetchAddonStreams with type=${resourceType}, id=${stremioId}`);
+                        
+                        const streams = await fetchAddonStreams(addon, resourceType, stremioId);
+                        console.log(`[Sources] fetchAddonStreams returned ${streams.length} items`);
+                        
+                        const addonName = addon.manifest?.name || addon.name;
+                        allSources = streams.map(s => parseAddonStream(s, addonName));
+                        
+                        if (allSources.length === 0) {
+                            console.warn('[Sources] No streams found from addon.');
+                        }
+                    } else {
+                        console.warn('[Sources] No IMDB ID found in external_ids response for this TMDB ID.');
+                        sourcesList.innerHTML = '<div class="text-center py-12 text-gray-500">No IMDB ID found. Cannot fetch from Stremio addons.</div>';
+                        return;
+                    }
                 }
             } catch (err) {
                 console.error('[Sources] Error in addon fetch loop:', err);
@@ -2092,6 +2261,151 @@ const init = async () => {
 
     try {
         if (addonId) {
+            // Check if this is a custom Stremio addon ID (not TMDB/IMDB)
+            const isCustomId = isStremioAddonId(id);
+            
+            if (isCustomId) {
+                console.log('[Details] Custom Stremio addon ID detected:', id);
+                
+                const addons = await getInstalledAddons();
+                const addon = addons.find(a => a.manifest.id === addonId);
+                if (!addon) throw new Error('Addon not found');
+                
+                let addonBaseUrl = addon.url.replace('/manifest.json', '');
+                if (addonBaseUrl.endsWith('/')) addonBaseUrl = addonBaseUrl.slice(0, -1);
+                
+                // Convert type to Stremio format (tv -> series)
+                const stremioType = type === 'tv' ? 'series' : type;
+                
+                let stremioMeta = null;
+                let formattedMeta = null;
+                
+                // Try to fetch meta from addon endpoint
+                try {
+                    stremioMeta = await fetchStremioMeta(addonBaseUrl, stremioType, id);
+                    formattedMeta = formatStremioMeta(stremioMeta);
+                    console.log('[Details] Successfully fetched meta from addon endpoint');
+                } catch (metaError) {
+                    console.warn('[Details] Meta endpoint failed, trying sessionStorage fallback:', metaError.message);
+                    
+                    // Fallback to catalog metadata from sessionStorage
+                    const cachedMeta = sessionStorage.getItem(`addon_meta_${addonId}_${id}`);
+                    if (cachedMeta) {
+                        stremioMeta = JSON.parse(cachedMeta);
+                        formattedMeta = formatStremioMeta(stremioMeta);
+                        console.log('[Details] Using cached catalog metadata');
+                    } else {
+                        throw new Error('Meta endpoint failed and no cached metadata available');
+                    }
+                }
+                
+                currentDetails = {
+                    id: formattedMeta.id,
+                    title: formattedMeta.title,
+                    name: formattedMeta.title,
+                    poster_path: formattedMeta.poster,
+                    backdrop_path: formattedMeta.background,
+                    overview: formattedMeta.description,
+                    vote_average: formattedMeta.rating,
+                    runtime: formattedMeta.runtime,
+                    genres: formattedMeta.genres ? formattedMeta.genres.map(g => typeof g === 'string' ? { name: g } : g) : [],
+                    release_date: formattedMeta.year ? `${formattedMeta.year}-01-01` : null,
+                    // Store original Stremio meta for stream fetching
+                    _stremioMeta: stremioMeta,
+                    _addonUrl: addonBaseUrl,
+                    _addonId: addonId,
+                    _stremioType: stremioType
+                };
+
+                
+                if (formattedMeta.cast) {
+                    currentDetails.credits = { 
+                        cast: formattedMeta.cast.map(c => typeof c === 'string' ? { name: c, id: '' } : c) 
+                    };
+                }
+                
+                renderDetails(currentDetails);
+                await renderAddonTabs();
+                
+                // Handle series with videos array
+                if (isTV && stremioMeta.videos && stremioMeta.videos.length > 0) {
+                    seasonSection.classList.remove('hidden');
+                    episodeSection.classList.remove('hidden');
+                    
+                    const seasons = {};
+                    stremioMeta.videos.forEach(v => {
+                        if (!seasons[v.season]) seasons[v.season] = [];
+                        seasons[v.season].push({
+                            episode_number: v.episode,
+                            name: v.title || `Episode ${v.episode}`,
+                            still_path: v.thumbnail,
+                            overview: v.overview,
+                            id: v.id
+                        });
+                    });
+                    
+                    Object.keys(seasons).sort((a,b) => a - b).forEach(sNum => {
+                        const clone = seasonBtnTemplate.content.cloneNode(true);
+                        const btn = clone.querySelector('.season-btn');
+                        btn.textContent = `Season ${sNum}`;
+                        btn.onclick = () => {
+                            document.querySelectorAll('.season-btn').forEach(b => b.classList.remove('bg-purple-600', 'text-white'));
+                            btn.classList.add('bg-purple-600', 'text-white');
+                            currentSeason = parseInt(sNum);
+                            currentEpisode = null;
+                            sourcesList.classList.add('hidden');
+                            selectEpisodeMsg.classList.remove('hidden');
+                            
+                            episodeGrid.innerHTML = '';
+                            episodesTitle.textContent = `Episodes (${seasons[sNum].length})`;
+                            seasons[sNum].sort((a,b) => a.episode_number - b.episode_number).forEach(ep => {
+                                const epClone = episodeCardTemplate.content.cloneNode(true);
+                                const epBtn = epClone.querySelector('.episode-btn');
+                                if (ep.still_path) {
+                                    const img = epClone.querySelector('.episode-img');
+                                    img.src = ep.still_path;
+                                    img.classList.remove('hidden');
+                                    epClone.querySelector('.episode-placeholder').classList.add('hidden');
+                                }
+                                epClone.querySelector('.episode-number').textContent = ep.episode_number;
+                                epClone.querySelector('.episode-name').textContent = ep.name;
+                                epBtn.onclick = () => {
+                                    document.querySelectorAll('.episode-btn').forEach(b => {
+                                        b.classList.remove('ring-2', 'ring-purple-500');
+                                        b.querySelector('.episode-overlay').classList.remove('opacity-100');
+                                    });
+                                    epBtn.classList.add('ring-2', 'ring-purple-500');
+                                    epBtn.querySelector('.episode-overlay').classList.add('opacity-100');
+                                    currentEpisode = ep.episode_number;
+                                    renderSources();
+                                    updateEmbeddedPlayerForEpisode();
+                                };
+                                episodeGrid.appendChild(epClone);
+                            });
+                        };
+                        if (parseInt(sNum) === 1) {
+                            btn.click();
+                        }
+                        seasonList.appendChild(clone);
+                    });
+                } else if (type === 'movie') {
+                    // For movies, show sources immediately
+                    renderSources();
+                }
+                
+                // Finish loading
+                loadingOverlay.classList.add('opacity-0');
+                setTimeout(() => loadingOverlay.remove(), 300);
+                contentContainer.classList.remove('hidden');
+                requestAnimationFrame(() => {
+                    contentContainer.classList.remove('opacity-0');
+                    document.querySelectorAll('#poster-anim-target, #info-anim-target, #right-panel-anim-target, #detail-overview, #cast-container, #media-container').forEach(el => {
+                        el?.classList.remove('opacity-0', 'translate-y-4');
+                    });
+                });
+                return; // Exit early - custom ID handled
+            }
+            
             // Check if the ID is an IMDB ID - if so, try TMDB first for richer metadata
             const isImdbId = id.startsWith('tt');
             let tmdbId = null;

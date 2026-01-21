@@ -1284,6 +1284,39 @@
         </div>
     </div>
 
+    <!-- Catalogs Page -->
+    <div id="catalogsPage" style="display: none;">
+        <h2 class="section-title">
+            <i class="fas fa-th-large"></i> Addon Catalogs
+        </h2>
+        <div id="catalogsGrid" class="genre-grid" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 1rem; padding: 1rem;">
+            <div class="loading">
+                <i class="fas fa-spinner fa-spin"></i> Loading catalogs...
+            </div>
+        </div>
+    </div>
+
+    <!-- Catalog Browse Page -->
+    <div id="catalogBrowsePage" style="display: none;">
+        <div class="page-header-enhanced">
+            <button class="back-btn" id="catalogBackBtn" style="position: absolute; left: 1rem; top: 1rem;">
+                <i class="fas fa-arrow-left"></i> Back
+            </button>
+            <div class="page-title-section">
+                <h2 class="section-title" id="catalogBrowseTitle">
+                    <i class="fas fa-th"></i> <span>Catalog</span>
+                </h2>
+            </div>
+        </div>
+        
+        <div class="movies-grid" id="catalogBrowseGrid">
+            <!-- Catalog items will be loaded here -->
+        </div>
+        <div class="loading" id="catalogBrowseLoading">
+            <i class="fas fa-spinner fa-spin"></i> Loading catalog...
+        </div>
+    </div>
+
     <!-- My List Page -->
     <div id="myListPage" style="display: none;">
         <div class="page-header-enhanced">
@@ -3827,35 +3860,36 @@ window.addEventListener('DOMContentLoaded', () => {
 </script>
 
 <!-- Modular JavaScript Files -->
-<script src="js/config.js"></script>
-<script src="js/theme.js"></script>
-<script src="js/dom.js"></script>
-<script src="js/notifications.js"></script>
-<script src="js/utils.js"></script>
-<script src="js/api.js"></script>
-<script src="js/torrents.js"></script>
-<script src="js/movies.js"></script>
-<script src="js/navigation.js"></script>
-<script src="js/settings.js"></script>
-<script src="js/trakt.js"></script>
-<script src="js/ui.js"></script>
-<script src="js/servers.js"></script>
-<script src="js/player.js"></script>
-<script src="js/downloader.js"></script>
-<script src="js/iptv.js"></script>
-<script src="js/livetv.js"></script>
-<script src="js/audiobooks.js"></script>
-<script src="js/books.js"></script>
-<script src="js/epubReader.js"></script>
-<script src="js/booktorrio.js"></script>
-<script src="js/music.js"></script>
-<script src="js/manga.js"></script>
-<script src="js/comics.js"></script>
-<script src="js/anime.js"></script>
-<script src="js/games.js"></script>
-<script src="js/streaming.js"></script>
-<script src="js/event-listeners.js"></script>
-<script src="js/app.js"></script>
+<script src="js/config.js?v=2"></script>
+<script src="js/theme.js?v=2"></script>
+<script src="js/dom.js?v=2"></script>
+<script src="js/notifications.js?v=2"></script>
+<script src="js/utils.js?v=2"></script>
+<script src="js/api.js?v=2"></script>
+<script src="js/torrents.js?v=2"></script>
+<script src="js/movies.js?v=2"></script>
+<script src="js/catalogs.js?v=2"></script>
+<script src="js/navigation.js?v=2"></script>
+<script src="js/settings.js?v=2"></script>
+<script src="js/trakt.js?v=2"></script>
+<script src="js/ui.js?v=2"></script>
+<script src="js/servers.js?v=2"></script>
+<script src="js/player.js?v=2"></script>
+<script src="js/downloader.js?v=2"></script>
+<script src="js/iptv.js?v=2"></script>
+<script src="js/livetv.js?v=2"></script>
+<script src="js/audiobooks.js?v=2"></script>
+<script src="js/books.js?v=2"></script>
+<script src="js/epubReader.js?v=2"></script>
+<script src="js/booktorrio.js?v=2"></script>
+<script src="js/music.js?v=2"></script>
+<script src="js/manga.js?v=2"></script>
+<script src="js/comics.js?v=2"></script>
+<script src="js/anime.js?v=2"></script>
+<script src="js/games.js?v=2"></script>
+<script src="js/streaming.js?v=2"></script>
+<script src="js/event-listeners.js?v=2"></script>
+<script src="js/app.js?v=2"></script>
 
 <!-- Floating Settings Menu -->
 <div class="floating-settings-container" id="floatingSettingsContainer">

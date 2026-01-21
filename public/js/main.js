@@ -29,6 +29,10 @@ function showGenresPage() {
     window.location.hash = '#/genres';
 }
 
+function showCatalogsPage() {
+    window.location.hash = '#/catalogs';
+}
+
 function showCustomMagnetModal() {
     const modal = document.getElementById('custom-magnet-modal');
     const input = document.getElementById('custom-magnet-input');
@@ -107,6 +111,82 @@ function showMiniGamesPage() {
 function showDownloaderPage() {
     window.location.hash = '#/downloader';
 }
+
+// ============================================================================
+// CATALOGS PAGE
+// ============================================================================
+async function initializeCatalogs() {
+    console.log('[Catalogs] initializeCatalogs called');
+    const catalogsGrid = document.getElementById('catalogsGrid');
+    if (!catalogsGrid) {
+        console.error('[Catalogs] catalogsGrid element not found!');
+        return;
+    }
+    
+    console.log('[Catalogs] catalogsGrid found, loading...');
+    catalogsGrid.innerHTML = '<div class="loading"><i class="fas fa-spinner fa-spin"></i> Loading catalogs...</div>';
+    
+    try {
+        console.log('[Catalogs] Fetching addons from /api/stremio/addons');
+        const response = await fetch('/api/stremio/addons');
+        const addons = await response.json();
+        console.log('[Catalogs] Received addons:', addons);
+        
+        catalogsGrid.innerHTML = '';
+        let found = false;
+
+        addons.forEach(addon => {
+            console.log('[Catalogs] Processing addon:', addon.manifest.name, 'catalogs:', addon.manifest.catalogs);
+            if (addon.manifest.catalogs && addon.manifest.catalogs.length > 0) {
+                const validCatalogs = addon.manifest.catalogs.filter(cat => cat.type === 'movie' || cat.type === 'series');
+                console.log('[Catalogs] Valid catalogs for', addon.manifest.name, ':', validCatalogs);
+                
+                if (validCatalogs.length > 0) {
+                    found = true;
+                    
+                    // Add addon header
+                    const header = document.createElement('div');
+                    header.style.cssText = 'grid-column: 1 / -1; display: flex; align-items: center; gap: 1rem; margin: 1.5rem 0 1rem;';
+                    header.innerHTML = `
+                        <div style="height: 1px; background: rgba(255,255,255,0.1); flex: 1;"></div>
+                        <span style="color: rgba(255,255,255,0.6); font-weight: bold; text-transform: uppercase; font-size: 0.75rem; letter-spacing: 0.05em;">${addon.manifest.name}</span>
+                        <div style="height: 1px; background: rgba(255,255,255,0.1); flex: 1;"></div>
+                    `;
+                    catalogsGrid.appendChild(header);
+
+                    validCatalogs.forEach(cat => {
+                        const btn = document.createElement('a');
+                        const catName = cat.name || cat.id;
+                        
+                        btn.href = `#/catalog?addon=${addon.manifest.id}&catalog=${cat.id}&type=${cat.type}&name=${encodeURIComponent(addon.manifest.name + ' - ' + catName)}`;
+                        btn.className = 'genre-card';
+                        btn.style.cssText = 'display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0.5rem; padding: 1.5rem; min-height: 100px; text-align: center; cursor: pointer;';
+                        
+                        btn.innerHTML = `
+                            <span style="font-size: 1.1rem; font-weight: 500;">${catName}</span>
+                            <span style="font-size: 0.75rem; color: rgba(255,255,255,0.5); text-transform: capitalize; background: rgba(0,0,0,0.3); padding: 0.25rem 0.5rem; border-radius: 9999px;">${cat.type}</span>
+                        `;
+                        
+                        console.log('[Catalogs] Created catalog button:', catName, 'href:', btn.href);
+                        catalogsGrid.appendChild(btn);
+                    });
+                }
+            }
+        });
+        
+        if (!found) {
+            console.log('[Catalogs] No catalogs found');
+            catalogsGrid.innerHTML = '<div class="loading" style="grid-column: 1 / -1;"><i class="fas fa-info-circle"></i> No addon catalogs found. Install addons from Settings.</div>';
+        } else {
+            console.log('[Catalogs] Successfully loaded catalogs');
+        }
+    } catch (error) {
+        console.error('[Catalogs] Error loading:', error);
+        catalogsGrid.innerHTML = '<div class="loading" style="grid-column: 1 / -1; color: #ef4444;"><i class="fas fa-exclamation-triangle"></i> Error loading catalogs</div>';
+    }
+}
+
+window.initializeCatalogs = initializeCatalogs;
 
 // ============================================================================
 // MOVIE LOADING FUNCTIONS
@@ -386,6 +466,7 @@ function toggleDoneWatching(event, id, mediaType, title, posterPath, year, ratin
 // ============================================================================
 window.showHomePage = showHomePage;
 window.showGenresPage = showGenresPage;
+window.showCatalogsPage = showCatalogsPage;
 window.showCustomMagnetModal = showCustomMagnetModal;
 window.showMyListPage = showMyListPage;
 window.showDoneWatchingPage = showDoneWatchingPage;

@@ -22,11 +22,11 @@ const { registerApiRoutes, registerMusicApi, initMusicDeps } = require('./api.cj
 
 // Import Stremio Engine routes (FAST torrent streaming)
 import { registerStremioRoutes } from './stremio_routes.mjs';
-import { clearStremioCache } from './stremio_engine.mjs';
+import { clearStremioCache } from './engine/stremio/stremio_engine.mjs';
 
 // Import unified Torrent Engine routes (supports multiple engines)
 import { registerTorrentEngineRoutes } from './torrent_engine_routes.mjs';
-import * as TorrentEngineManager from './torrent_engine_manager.mjs';
+import * as TorrentEngineManager from './engine/manager/torrent_engine_manager.mjs';
 
 // Import the new transcoder module
 import { initTranscoder, handleTranscodeStream, getMetadata as getTranscoderMetadata } from './transcoder.js';

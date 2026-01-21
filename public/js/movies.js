@@ -404,7 +404,7 @@ function refreshDisplay() {
 // ===== DETAILS MODAL FUNCTIONS =====
 
 async function openDetailsModal(item, mediaType = null) {
-    console.log('[Movies] Opening details modal for:', item.title || item.name);
+    console.log('[Movies] Opening details modal for:', item.title || item.name, 'addonId:', item._addonId);
     
     const detailsModal = document.getElementById('detailsModal');
     if (!detailsModal) {
@@ -412,11 +412,44 @@ async function openDetailsModal(item, mediaType = null) {
         return;
     }
     
+    // Check if this is an addon item
+    const isAddonItem = !!item._addonId;
+    
     // Determine media type
-    const type = mediaType || item.media_type || (item.first_air_date ? 'tv' : 'movie');
+    const type = mediaType || item.media_type || item.type || (item.first_air_date ? 'tv' : 'movie');
     currentMediaType = type;
     currentContent = item;
     currentMovie = item;
+    
+    // If addon item, try to fetch/use cached metadata
+    if (isAddonItem) {
+        console.log('[Movies] Addon item detected, checking for cached metadata');
+        const cachedMeta = sessionStorage.getItem(`addon_meta_${item._addonId}_${item.id}`);
+        if (cachedMeta) {
+            try {
+                const meta = JSON.parse(cachedMeta);
+                console.log('[Movies] Using cached addon metadata:', meta);
+                // Merge cached metadata with item
+                item = {
+                    ...item,
+                    title: meta.name || item.title,
+                    name: meta.name || item.name,
+                    overview: meta.description || item.overview,
+                    poster_path: meta.poster || item.poster_path,
+                    backdrop_path: meta.background || item.backdrop_path,
+                    vote_average: meta.imdbRating || item.vote_average,
+                    release_date: meta.releaseInfo || item.release_date,
+                    first_air_date: meta.releaseInfo || item.first_air_date,
+                    genres: meta.genre || item.genres,
+                    _stremioMeta: meta
+                };
+                currentContent = item;
+                currentMovie = item;
+            } catch (e) {
+                console.error('[Movies] Error parsing cached metadata:', e);
+            }
+        }
+    }
     
     // Reset torrent state
     torrentsLoaded = false;
@@ -503,39 +536,45 @@ async function openDetailsModal(item, mediaType = null) {
         seasonsContainer.style.display = 'none';
     }
     
-    // Fetch full details
-    try {
-        const details = await fetchTmdbDetailsById(type, item.id);
-        if (details) {
-            currentContent = { ...item, ...details };
-            currentMovie = currentContent;
-            
-            if (modalRuntime) {
-                if (type === 'movie' && details.runtime) {
-                    modalRuntime.textContent = `${details.runtime} min`;
-                } else if (type === 'tv' && details.episode_run_time && details.episode_run_time.length > 0) {
-                    modalRuntime.textContent = `${details.episode_run_time[0]} min/ep`;
+    // Fetch full details (skip for addon items as we already have metadata)
+    if (!isAddonItem) {
+        try {
+            const details = await fetchTmdbDetailsById(type, item.id);
+            if (details) {
+                currentContent = { ...item, ...details };
+                currentMovie = currentContent;
+                
+                if (modalRuntime) {
+                    if (type === 'movie' && details.runtime) {
+                        modalRuntime.textContent = `${details.runtime} min`;
+                    } else if (type === 'tv' && details.episode_run_time && details.episode_run_time.length > 0) {
+                        modalRuntime.textContent = `${details.episode_run_time[0]} min/ep`;
+                    }
+                }
+                if (modalTagline && details.tagline) {
+                    modalTagline.textContent = details.tagline;
+                }
+                
+                // Load cast
+                if (details.credits && details.credits.cast) {
+                    displayCast(details.credits.cast.slice(0, 10));
+                }
+                
+                // Load similar content
+                loadSimilarContent(type, item.id);
+                
+                // Show seasons for TV shows
+                if (type === 'tv' && details.seasons) {
+                    displaySeasons(details.seasons, item.id);
                 }
             }
-            if (modalTagline && details.tagline) {
-                modalTagline.textContent = details.tagline;
-            }
-            
-            // Load cast
-            if (details.credits && details.credits.cast) {
-                displayCast(details.credits.cast.slice(0, 10));
-            }
-            
-            // Load similar content
-            loadSimilarContent(type, item.id);
-            
-            // Show seasons for TV shows
-            if (type === 'tv' && details.seasons) {
-                displaySeasons(details.seasons, item.id);
-            }
+        } catch (error) {
+            console.error('[Movies] Error fetching TMDB details:', error);
         }
-    } catch (error) {
-        console.error('[Movies] Error fetching details:', error);
+    } else {
+        console.log('[Movies] Skipping TMDB fetch for addon item');
+        // For addon items, we don't have cast/similar/seasons from TMDB
+        // Just use what we have from the cached metadata
     }
     
     // Update button texts based on streaming mode

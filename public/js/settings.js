@@ -1326,14 +1326,21 @@ function initializeSettingsPage() {
             const config = await res.json();
             console.log('[Engine] Loaded config:', config);
             if (torrentEngineSelect) {
+                // Always default to 'stremio' if no engine is set
                 torrentEngineSelect.value = config.engine || 'stremio';
             }
             if (engineInstancesSlider) {
                 engineInstancesSlider.value = config.instances || 1;
             }
+            // Always default to 'stremio' if no engine is set
             updateEngineUI(config.engine || 'stremio', config.instances || 1);
         } catch (e) {
             console.warn('[Engine] Failed to load config:', e);
+            // On error, default to stremio
+            if (torrentEngineSelect) {
+                torrentEngineSelect.value = 'stremio';
+            }
+            updateEngineUI('stremio', 1);
         }
     }
     

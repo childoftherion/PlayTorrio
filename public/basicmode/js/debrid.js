@@ -496,13 +496,17 @@ export const initTorrentEngineUI = async () => {
         }
     } catch (e) {
         console.warn('[TorrentEngineUI] Failed to load engine config from server:', e);
-        // Fallback to settings
-        const settings = await getDebridSettings();
-        if (settings.torrentEngine) {
-            currentEngine = settings.torrentEngine;
-        }
-        if (settings.torrentEngineInstances) {
-            currentInstances = settings.torrentEngineInstances;
+        // Fallback to settings, but still default to 'stremio'
+        try {
+            const settings = await getDebridSettings();
+            if (settings.torrentEngine) {
+                currentEngine = settings.torrentEngine;
+            }
+            if (settings.torrentEngineInstances) {
+                currentInstances = settings.torrentEngineInstances;
+            }
+        } catch (settingsError) {
+            console.warn('[TorrentEngineUI] Failed to load settings, using default stremio');
         }
     }
     
@@ -514,8 +518,8 @@ export const initTorrentEngineUI = async () => {
     const updateUI = (engine) => {
         engineDescription.textContent = descriptions[engine] || descriptions.stremio;
         
-        // Show/hide instances slider (not for Stremio)
-        if (engine === 'stremio') {
+        // Show/hide instances slider (not for Stremio or WebTorrent)
+        if (engine === 'stremio' || engine === 'webtorrent') {
             instancesContainer.classList.add('hidden');
         } else {
             instancesContainer.classList.remove('hidden');

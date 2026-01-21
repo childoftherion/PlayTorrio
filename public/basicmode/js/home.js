@@ -307,15 +307,47 @@ const createPosterCard = (item, mediaType, isGrid = false) => {
 
   // If media_type is inside item (from search), use it. Fallback to passed mediaType.
   let type = item.media_type || mediaType || (item.title ? 'movie' : 'tv');
-  // Normalize 'series' to 'tv'
-  if (type === 'series') type = 'tv';
+  
+  // For addon items, keep 'series' as-is (Stremio protocol uses 'series')
+  // For TMDB items, normalize 'series' to 'tv'
+  if (type === 'series' && !item._addonId) {
+    type = 'tv';
+  }
   
   // Skip people or other non-watchable types if they sneak in
-  if (type !== 'movie' && type !== 'tv') return null;
+  if (type !== 'movie' && type !== 'tv' && type !== 'series') return null;
 
   // Build the link - include addonId if present
   if (item._addonId) {
     link.href = `details.html?type=${type}&id=${encodeURIComponent(item.id)}&addonId=${item._addonId}`;
+    
+    // Store catalog metadata in sessionStorage for addons that don't support /meta endpoint
+    link.addEventListener('click', (e) => {
+      console.log('[Home] Caching addon metadata for:', item.id);
+      const catalogMeta = {
+        id: item.id,
+        name: item.name || item.title,
+        // Hanime uses 'poster' not 'poster_path'
+        poster: item.poster || item.poster_path,
+        background: item.background || item.backdrop_path || item.poster || item.poster_path,
+        logo: item.logo,
+        // Hanime uses 'description' not 'overview'
+        description: item.description || item.overview,
+        // Hanime uses 'genre' array not 'genres'
+        genre: item.genre || item.genres || [],
+        type: item.type || type,
+        releaseInfo: item.releaseInfo || item.release_date || item.first_air_date,
+        imdbRating: item.imdbRating || item.vote_average,
+        runtime: item.runtime,
+        director: item.director,
+        cast: item.cast,
+        videos: item.videos,
+        behaviorHints: item.behaviorHints,
+        posterShape: item.posterShape
+      };
+      console.log('[Home] Cached metadata:', catalogMeta);
+      sessionStorage.setItem(`addon_meta_${item._addonId}_${item.id}`, JSON.stringify(catalogMeta));
+    });
   } else {
     link.href = `details.html?type=${type}&id=${item.id}`;
   }

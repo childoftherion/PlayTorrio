@@ -3,7 +3,7 @@
  * Engine provides raw stream, player's transcoder handles the rest
  */
 
-import * as EngineManager from './torrent_engine_manager.mjs';
+import * as EngineManager from './engine/manager/torrent_engine_manager.mjs';
 import mime from 'mime-types';
 import path from 'path';
 import fs from 'fs';

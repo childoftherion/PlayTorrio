@@ -357,8 +357,11 @@ const createCard = (item) => {
         }
     }
     
-    // Normalize 'series' to 'tv' for consistency
-    if (itemType === 'series') itemType = 'tv';
+    // For addon items, keep 'series' as-is (Stremio protocol uses 'series')
+    // For TMDB items, normalize 'series' to 'tv'
+    if (itemType === 'series' && !item._addonId) {
+        itemType = 'tv';
+    }
     
     const itemId = item.id;
     const rating = item.vote_average || (item.imdbRating ? parseFloat(item.imdbRating) : null);
@@ -383,6 +386,33 @@ const createCard = (item) => {
     if (item._addonId) {
         // Use addon meta endpoint for details
         link.href = `details.html?type=${itemType}&id=${encodeURIComponent(itemId)}&addonId=${item._addonId}`;
+        
+        // Store catalog metadata in sessionStorage for addons that don't support /meta endpoint
+        link.addEventListener('click', (e) => {
+            console.log('[Grid] Caching addon metadata for:', itemId);
+            const catalogMeta = {
+                id: item.id,
+                name: item.name || item.title,
+                // Support both Stremio format (poster) and TMDB format (poster_path)
+                poster: item.poster || item.poster_path,
+                background: item.background || item.backdrop_path || item.poster || item.poster_path,
+                logo: item.logo,
+                // Support both formats
+                description: item.description || item.overview,
+                genre: item.genre || item.genres || [],
+                type: item.type || itemType,
+                releaseInfo: item.releaseInfo || item.release_date || item.first_air_date,
+                imdbRating: item.imdbRating || item.vote_average,
+                runtime: item.runtime,
+                director: item.director,
+                cast: item.cast,
+                videos: item.videos,
+                behaviorHints: item.behaviorHints,
+                posterShape: item.posterShape
+            };
+            console.log('[Grid] Cached metadata:', catalogMeta);
+            sessionStorage.setItem(`addon_meta_${item._addonId}_${itemId}`, JSON.stringify(catalogMeta));
+        });
     } else {
         link.href = `details.html?type=${itemType}&id=${itemId}`;
     }

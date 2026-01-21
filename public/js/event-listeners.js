@@ -309,6 +309,9 @@ function setupSidebarNavigation() {
                 case 'genres':
                     window.location.hash = '#/genres';
                     break;
+                case 'catalogs':
+                    window.location.hash = '#/catalogs';
+                    break;
                 case 'my-list':
                     window.location.hash = '#/my-list';
                     break;
