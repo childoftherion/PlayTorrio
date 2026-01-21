@@ -28,6 +28,9 @@ function setupEventListeners() {
     // ===== DEBRID =====
     setupDebridEventListeners();
     
+    // ===== AUTO-UPDATER =====
+    setupAutoUpdaterListener();
+    
     // ===== GENRE PAGE =====
     setupGenrePageListeners();
     
@@ -863,6 +866,76 @@ function setupDebridEventListeners() {
     }
     
     console.log('[EventListeners] Debrid listeners set up');
+}
+
+// ===== AUTO-UPDATER LISTENER =====
+function setupAutoUpdaterListener() {
+    if (window.electronAPI && window.electronAPI.onUpdateAvailable) {
+        window.electronAPI.onUpdateAvailable((info) => {
+            console.log('Update available:', info);
+            
+            // Create modal
+            const modal = document.createElement('div');
+            modal.className = 'modal active';
+            modal.style.cssText = 'display: flex; z-index: 9999; background: rgba(0, 0, 0, 0.8); backdrop-filter: blur(10px);';
+            modal.innerHTML = `
+                <div class="modal-content" style="max-width: 500px; background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%); border: 2px solid rgba(124, 58, 237, 0.5); border-radius: 20px; padding: 2rem; box-shadow: 0 20px 60px rgba(124, 58, 237, 0.3);">
+                    <div style="width: 80px; height: 80px; background: rgba(124, 58, 237, 0.2); border-radius: 50%; display: flex; align-items: center; justify-center; margin: 0 auto 1.5rem;">
+                        <svg style="width: 40px; height: 40px; color: #7c3aed;" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                        </svg>
+                    </div>
+                    <h2 style="font-size: 1.75rem; font-weight: bold; color: white; text-align: center; margin-bottom: 0.5rem;">Update Available!</h2>
+                    <p style="color: rgba(255, 255, 255, 0.7); text-align: center; margin-bottom: 2rem;">Version <span style="color: white; font-weight: bold;">${info.version}</span> is ready to download.</p>
+                    <div style="display: flex; flex-direction: column; gap: 0.75rem;">
+                        <button id="update-download-btn" class="btn" style="width: 100%; padding: 0.875rem; background: linear-gradient(135deg, #7c3aed 0%, #6d28d9 100%); color: white; font-weight: bold; border-radius: 12px; border: none; cursor: pointer; transition: all 0.3s; box-shadow: 0 4px 15px rgba(124, 58, 237, 0.4); display: flex; align-items: center; justify-content: center; gap: 0.5rem;">
+                            <span>Download Now</span>
+                            <svg style="width: 20px; height: 20px;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/></svg>
+                        </button>
+                        <button id="update-later-btn" style="width: 100%; padding: 0.5rem; background: transparent; color: rgba(255, 255, 255, 0.5); font-size: 0.875rem; font-weight: 500; border: none; cursor: pointer; transition: color 0.3s;">
+                            Remind Me Later
+                        </button>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(modal);
+            
+            // Add hover effect to download button
+            const downloadBtn = document.getElementById('update-download-btn');
+            downloadBtn.addEventListener('mouseenter', () => {
+                downloadBtn.style.transform = 'translateY(-2px)';
+                downloadBtn.style.boxShadow = '0 6px 20px rgba(124, 58, 237, 0.5)';
+            });
+            downloadBtn.addEventListener('mouseleave', () => {
+                downloadBtn.style.transform = 'translateY(0)';
+                downloadBtn.style.boxShadow = '0 4px 15px rgba(124, 58, 237, 0.4)';
+            });
+            
+            // Add hover effect to later button
+            const laterBtn = document.getElementById('update-later-btn');
+            laterBtn.addEventListener('mouseenter', () => {
+                laterBtn.style.color = 'rgba(255, 255, 255, 0.8)';
+            });
+            laterBtn.addEventListener('mouseleave', () => {
+                laterBtn.style.color = 'rgba(255, 255, 255, 0.5)';
+            });
+            
+            // Download button click handler
+            downloadBtn.onclick = () => {
+                if (window.electronAPI.openExternal) {
+                    window.electronAPI.openExternal(info.downloadUrl);
+                }
+                modal.remove();
+            };
+            
+            // Later button click handler
+            laterBtn.onclick = () => {
+                modal.remove();
+            };
+        });
+        
+        console.log('[EventListeners] Auto-updater listener set up');
+    }
 }
 
 // Export the main setup function
