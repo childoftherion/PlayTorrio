@@ -3967,6 +3967,128 @@ window.addEventListener('DOMContentLoaded', () => {
     </button>
 </div>
 
+<!-- Player Overlay Management -->
+<script>
+    // Player overlay management for HTML5 player iframe
+    window.playerOverlay = {
+        overlay: null,
+        iframe: null,
+        currentStreamHash: null,
+        isAltEngine: false,
+        isClosing: false,
+
+        init() {
+            console.log('[PlayerOverlay] Initializing...');
+            
+            // Create overlay container
+            this.overlay = document.createElement('div');
+            this.overlay.style.cssText = `
+                position: fixed;
+                top: 0;
+                left: 0;
+                width: 100%;
+                height: 100%;
+                background: #000;
+                z-index: 99999;
+                display: none;
+            `;
+            
+            // Create iframe
+            this.iframe = document.createElement('iframe');
+            this.iframe.style.cssText = `
+                width: 100%;
+                height: 100%;
+                border: none;
+            `;
+            this.iframe.allow = 'autoplay; fullscreen; picture-in-picture';
+            this.iframe.allowFullscreen = true;
+            
+            this.overlay.appendChild(this.iframe);
+            document.body.appendChild(this.overlay);
+            
+            // Handle iframe load errors
+            this.iframe.addEventListener('error', () => {
+                console.error('[PlayerOverlay] Iframe load error');
+                this.close();
+            });
+            
+            console.log('[PlayerOverlay] Initialized successfully');
+        },
+
+        open(playerUrl, streamHash = null, isAltEngine = false) {
+            if (!this.overlay || !this.iframe) this.init();
+            
+            this.isClosing = false;
+            this.currentStreamHash = streamHash || null;
+            this.isAltEngine = isAltEngine || false;
+            
+            console.log('[PlayerOverlay] Opening player:', playerUrl);
+            console.log('[PlayerOverlay] Stream hash:', this.currentStreamHash);
+            console.log('[PlayerOverlay] Alt engine:', this.isAltEngine);
+            
+            this.iframe.src = playerUrl;
+            this.overlay.style.display = 'block';
+            document.body.style.overflow = 'hidden';
+        },
+
+        close() {
+            if (this.isClosing) {
+                console.log('[PlayerOverlay] Already closing, ignoring duplicate call');
+                return;
+            }
+            
+            this.isClosing = true;
+            console.log('[PlayerOverlay] Closing player...');
+            
+            // Cleanup stream if we have a hash (local torrent stream)
+            if (this.currentStreamHash) {
+                const endpoint = this.isAltEngine ? '/api/alt-stop-stream' : '/api/stop-stream';
+                console.log('[PlayerOverlay] Stopping stream:', this.currentStreamHash);
+                fetch(`${API_BASE_URL.replace('/api', '')}${endpoint}?hash=${this.currentStreamHash}`)
+                    .then(() => console.log('[PlayerOverlay] Stream stopped'))
+                    .catch(e => console.warn('[PlayerOverlay] Stream stop error:', e));
+                
+                this.currentStreamHash = null;
+                this.isAltEngine = false;
+            }
+            
+            // Clear iframe and hide overlay
+            this.iframe.src = 'about:blank';
+            this.overlay.style.display = 'none';
+            document.body.style.overflow = '';
+            
+            // Reset closing flag after a short delay
+            setTimeout(() => {
+                this.isClosing = false;
+            }, 500);
+            
+            console.log('[PlayerOverlay] Player closed');
+        }
+    };
+    
+    // Listen for messages from the player iframe
+    window.addEventListener('message', (event) => {
+        if (event.data?.type === 'player-close') {
+            console.log('[PlayerOverlay] Received close message from player');
+            if (window.playerOverlay) {
+                window.playerOverlay.close();
+            }
+        } else if (event.data?.type === 'player-cleanup') {
+            console.log('[PlayerOverlay] Received cleanup message:', event.data.hash);
+            if (window.playerOverlay && event.data.hash) {
+                window.playerOverlay.currentStreamHash = event.data.hash;
+            }
+        }
+    });
+    
+    // Initialize on DOM ready
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', () => window.playerOverlay.init());
+    } else {
+        window.playerOverlay.init();
+    }
+</script>
+
 </body>
 </html>
 
