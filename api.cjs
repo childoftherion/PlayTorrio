@@ -1547,7 +1547,7 @@ async function moviebox_fetchStreamsFromFMovies({ subjectId, detailPath, se = '0
 }
 
 // TMDB lookup
-const MOVIEBOX_TMDB_API_KEY = 'b3556f3b206e16f82df4d1f6fd4545e6';
+const MOVIEBOX_TMDB_API_KEY = 'c3515fdc674ea2bd7b514f4bc3616a4a';
 async function moviebox_getTitleForTmdbId(id, preferredType) {
     const order = preferredType === 'tv' ? ['tv', 'movie'] : preferredType === 'movie' ? ['movie', 'tv'] : ['movie', 'tv'];
     let lastError;
@@ -2857,7 +2857,7 @@ app.get('/', (req, res) => {
 // ============================================================================
 
 // 111477 Constants
-const lib111477_TMDB_API_KEY = 'b3556f3b206e16f82df4d1f6fd4545e6';
+const lib111477_TMDB_API_KEY = 'c3515fdc674ea2bd7b514f4bc3616a4a';
 const lib111477_TMDB_BASE_URL = 'https://api.themoviedb.org/3';
 
 // 111477 Helper Functions
@@ -4310,7 +4310,7 @@ app.post('/api/audiobooks/stream', async (req, res) => {
 // AIOSTREAMS™ TMDB + STREAM FORWARDING MODULE
 // ============================================================================
 
-const TMDB_API_KEY = "b3556f3b206e16f82df4d1f6fd4545e6";
+const TMDB_API_KEY = "c3515fdc674ea2bd7b514f4bc3616a4a";
 const TMDB_BASE_URL = "https://api.themoviedb.org/3";
 
 // Read Manifest URL saved by Electron (window.electronAPI.manifestWrite)

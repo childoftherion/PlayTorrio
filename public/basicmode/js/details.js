@@ -9,7 +9,8 @@ import {
     getTVShowVideos,
     getEpisodeImages,
     getExternalIds,
-    findByExternalId
+    findByExternalId,
+    searchMulti
 } from './api.js';
 import { searchJackett, getJackettKey, setJackettKey, getJackettSettings } from './jackett.js';
 import { getInstalledAddons, installAddon, removeAddon, fetchAddonStreams, parseAddonStream } from './addons.js';
@@ -1403,20 +1404,37 @@ const renderSources = async () => {
                             const parsed = parseStremioStream(stream);
                             const addonName = addon.manifest?.name || addon.name;
                             
+                            console.log('[StreamMapping]', {
+                                streamTitle: stream.name || stream.title,
+                                parsedType: parsed.type,
+                                parsedUrl: parsed.url,
+                                externalUrl: stream.externalUrl
+                            });
+                            
                             return {
                                 title: parsed.title,
+                                fullTitle: stream.description || stream.title || parsed.title, // Store full description
                                 quality: parsed.quality || 'Unknown',
                                 codec: 'Unknown',
                                 size: 'N/A',
                                 sizeBytes: 0,
                                 seeders: 0,
                                 indexer: addonName,
-                                link: parsed.type === 'url' ? parsed.url : null,
+                                link: parsed.type === 'url' ? parsed.url : (parsed.type === 'external' ? parsed.url : null),
                                 magnet: parsed.type === 'torrent' ? parsed.url : null,
                                 url: parsed.url,
                                 streamType: parsed.type,
-                                hdr: false
+                                hdr: false,
+                                description: stream.description, // Keep original description for externalUrl parsing
+                                externalUrl: stream.externalUrl // Keep original externalUrl
                             };
+                        }).filter(source => {
+                            // Filter out web.stremio.com links
+                            if (source.externalUrl && source.externalUrl.startsWith('https://web.stremio.com')) {
+                                console.log('[StreamMapping] Filtering out web.stremio.com link:', source.title);
+                                return false;
+                            }
+                            return true;
                         });
                         
                         if (allSources.length === 0) {
@@ -1467,7 +1485,16 @@ const renderSources = async () => {
                         console.log(`[Sources] fetchAddonStreams returned ${streams.length} items`);
                         
                         const addonName = addon.manifest?.name || addon.name;
-                        allSources = streams.map(s => parseAddonStream(s, addonName));
+                        allSources = streams
+                            .map(s => parseAddonStream(s, addonName))
+                            .filter(source => {
+                                // Filter out web.stremio.com links
+                                if (source.externalUrl && source.externalUrl.startsWith('https://web.stremio.com')) {
+                                    console.log('[Sources] Filtering out web.stremio.com link:', source.title);
+                                    return false;
+                                }
+                                return true;
+                            });
                         
                         if (allSources.length === 0) {
                             console.warn('[Sources] No streams found from addon.');
@@ -1722,7 +1749,7 @@ const displaySources = (sources) => {
         clone.querySelector('.file-size').textContent = source.size;
         clone.querySelector('.provider-name').textContent = source.indexer;
 
-        const link = source.magnet || source.link;
+        const link = source.magnet || source.link || source.url || source.externalUrl;
 
         // Copy button logic
         const copyBtn = clone.querySelector('.copy-btn');
@@ -1767,7 +1794,194 @@ const displaySources = (sources) => {
         // Play button logic
         const playBtn = clone.querySelector('.play-btn');
         playBtn.onclick = async () => {
-            if (!link) return;
+            console.log('[PlayButton] Clicked! Link:', link);
+            console.log('[PlayButton] Source:', source);
+            
+            // Get the URL to work with (prioritize externalUrl for addon streams)
+            const externalUrl = source.externalUrl || link || source.url;
+            
+            if (!externalUrl) {
+                console.warn('[PlayButton] No link or externalUrl available');
+                return;
+            }
+
+            // Check if this is a stremio:///detail external URL
+            // These URLs indicate we should search TMDB and navigate to the details page
+            if (externalUrl.includes('stremio:///detail') || externalUrl.includes('stremio:///search')) {
+                console.log('[ExternalURL] Detected stremio external link:', externalUrl);
+                
+                // Check if it's a detail URL with IMDB ID (e.g., stremio:///detail/movie/tt32642706)
+                const detailMatch = externalUrl.match(/stremio:\/\/\/detail\/(movie|series|tv)\/(.+)/);
+                if (detailMatch) {
+                    const mediaType = detailMatch[1] === 'series' ? 'tv' : detailMatch[1];
+                    const contentId = detailMatch[2];
+                    
+                    // Check if it's a recommendation ID (e.g., mlt-rec-tt0295701)
+                    if (contentId.startsWith('mlt-rec-')) {
+                        const imdbId = contentId.replace('mlt-rec-', '');
+                        console.log('[ExternalURL] Recommendation URL detected, IMDB ID:', imdbId);
+                        
+                        // Navigate to grid page with addon catalog for recommendations
+                        // The addon should have a catalog like: /catalog/movie/mlt-tmdb-movie-rec/search=tt0295701.json
+                        const addonId = currentProvider || 'community.morelikethis';
+                        const catalogId = mediaType === 'movie' ? 'mlt-tmdb-movie-rec' : 'mlt-tmdb-series-rec';
+                        
+                        hidePlayLoading();
+                        window.location.href = `grid.html?type=addon&addonId=${addonId}&catalogId=${catalogId}&catalogType=${mediaType}&search=${imdbId}&name=Similar to this`;
+                        return;
+                    }
+                    
+                    // Regular IMDB ID (e.g., tt32642706)
+                    const imdbId = contentId;
+                    
+                    console.log('[ExternalURL] Found IMDB ID in detail URL:', imdbId);
+                    showPlayLoading('Looking up on TMDB...');
+                    
+                    try {
+                        // Use TMDB's find API to get TMDB data from IMDB ID
+                        const findResults = await findByExternalId(imdbId, 'imdb_id');
+                        console.log('[ExternalURL] TMDB find results:', findResults);
+                        
+                        // Find the result based on media type
+                        let tmdbResult = null;
+                        if (mediaType === 'movie' && findResults.movie_results && findResults.movie_results.length > 0) {
+                            tmdbResult = findResults.movie_results[0];
+                        } else if (mediaType === 'tv' && findResults.tv_results && findResults.tv_results.length > 0) {
+                            tmdbResult = findResults.tv_results[0];
+                        }
+                        
+                        if (tmdbResult) {
+                            console.log('[ExternalURL] Found TMDB match:', tmdbResult.title || tmdbResult.name, tmdbResult.id);
+                            hidePlayLoading();
+                            
+                            // Navigate to details page
+                            window.location.href = `details.html?type=${mediaType}&id=${tmdbResult.id}`;
+                            return;
+                        } else {
+                            console.warn('[ExternalURL] No TMDB match found for IMDB ID:', imdbId);
+                            hidePlayLoading();
+                            alert('Could not find this content on TMDB.');
+                            return;
+                        }
+                    } catch (error) {
+                        console.error('[ExternalURL] TMDB find error:', error);
+                        hidePlayLoading();
+                        alert('Failed to lookup on TMDB: ' + error.message);
+                        return;
+                    }
+                }
+                
+                // Check if it's a search URL (e.g., stremio:///search?search=tt32642706)
+                const searchMatch = externalUrl.match(/stremio:\/\/\/search\?search=(.+)/);
+                if (searchMatch) {
+                    const searchQuery = decodeURIComponent(searchMatch[1]);
+                    console.log('[ExternalURL] Search URL detected, query:', searchQuery);
+                    
+                    // Navigate to grid page with addon catalog search to display the results
+                    // Use the current provider that's generating these streams
+                    const addonId = currentProvider;
+                    
+                    // Determine media type from current page
+                    const mediaType = type === 'tv' ? 'series' : 'movie';
+                    const catalogId = mediaType === 'movie' ? 'mlt-tmdb-movie-rec' : 'mlt-tmdb-series-rec';
+                    
+                    hidePlayLoading();
+                    window.location.href = `grid.html?type=addon&addonId=${addonId}&catalogId=${catalogId}&catalogType=${mediaType}&search=${searchQuery}&name=More Like This`;
+                    return;
+                }
+                
+                // If it's just a generic stremio:/// URL without specific handling, try name-based search
+                console.log('[ExternalURL] Generic stremio URL, checking for metadata...');
+                
+                // Check if we have metadata (name and year) to search TMDB
+                if (source.fullTitle && source.fullTitle.includes('📆 Release:')) {
+                    console.log('[ExternalURL] Has metadata, searching TMDB...');
+                    
+                    // Extract name and year from fullTitle/description
+                    const description = source.fullTitle || source.description || '';
+                    
+                    // Parse release date from description (format: 📆 Release: 2009-12-19)
+                    const releaseMatch = description.match(/📆\s*Release:\s*(\d{4})-\d{2}-\d{2}/);
+                    const year = releaseMatch ? releaseMatch[1] : null;
+                    
+                    // Get the name from source.title
+                    const name = source.title || '';
+                    
+                    console.log('[ExternalURL] Extracted:', { name, year });
+                    
+                    if (name) {
+                        showPlayLoading('Searching TMDB...');
+                        
+                        try {
+                            // Search TMDB with just the name (don't include year in search query)
+                            console.log('[ExternalURL] Searching TMDB for:', name);
+                            
+                            const searchResults = await searchMulti(name);
+                            const results = searchResults.results || [];
+                            
+                            console.log('[ExternalURL] Found', results.length, 'results');
+                            
+                            // Filter to only movies and TV shows
+                            const validResults = results.filter(r => r.media_type === 'movie' || r.media_type === 'tv');
+                            
+                            // Try to match by name and year
+                            let match = null;
+                            
+                            if (year) {
+                                // Match by name and year
+                                match = validResults.find(r => {
+                                    const resultYear = (r.release_date || r.first_air_date || '').split('-')[0];
+                                    const resultName = (r.title || r.name || '').toLowerCase();
+                                    const searchName = name.toLowerCase();
+                                    
+                                    return resultYear === year && resultName === searchName;
+                                });
+                            }
+                            
+                            // If no exact match, try fuzzy match by name only
+                            if (!match && validResults.length > 0) {
+                                const searchNameLower = name.toLowerCase();
+                                match = validResults.find(r => {
+                                    const resultName = (r.title || r.name || '').toLowerCase();
+                                    return resultName === searchNameLower;
+                                });
+                            }
+                            
+                            // If still no match, take the first result
+                            if (!match && validResults.length > 0) {
+                                match = validResults[0];
+                                console.log('[ExternalURL] No exact match, using first result');
+                            }
+                            
+                            if (match) {
+                                console.log('[ExternalURL] Matched:', match.title || match.name, match.id);
+                                hidePlayLoading();
+                                
+                                // Navigate to details page
+                                const mediaType = match.media_type === 'tv' ? 'tv' : 'movie';
+                                window.location.href = `details.html?type=${mediaType}&id=${match.id}`;
+                                return;
+                            } else {
+                                console.warn('[ExternalURL] No match found on TMDB');
+                                hidePlayLoading();
+                                alert('Could not find this content on TMDB. Please try searching manually.');
+                                return;
+                            }
+                        } catch (error) {
+                            console.error('[ExternalURL] TMDB search error:', error);
+                            hidePlayLoading();
+                            alert('Failed to search TMDB: ' + error.message);
+                            return;
+                        }
+                    }
+                }
+                
+                // If we get here, it's a stremio URL but we can't handle it
+                console.warn('[ExternalURL] Cannot handle this stremio URL');
+                hidePlayLoading();
+                alert('This stream type is not supported.');
+                return;
+            }
 
             // Show loading overlay immediately
             showPlayLoading('Preparing stream...');
@@ -1775,26 +1989,26 @@ const displaySources = (sources) => {
             try {
                 // Check if this is a Jackett/torrent download URL that needs resolution
                 // Jackett URLs look like: http://127.0.0.1:9117/dl/...?jackett_apikey=...
-                const isJackettUrl = link.includes('jackett') ||      // jackett_apikey or jackett in URL
-                                     link.includes(':9117') ||        // Default Jackett port
-                                     link.includes('/dl/') ||         // Jackett download path
-                                     link.includes('/download');      // Generic download path
+                const isJackettUrl = externalUrl.includes('jackett') ||      // jackett_apikey or jackett in URL
+                                     externalUrl.includes(':9117') ||        // Default Jackett port
+                                     externalUrl.includes('/dl/') ||         // Jackett download path
+                                     externalUrl.includes('/download');      // Generic download path
                 
-                console.log(`[Play] Link: ${link.substring(0, 100)}...`);
+                console.log(`[Play] Link: ${externalUrl.substring(0, 100)}...`);
                 console.log(`[Play] isJackettUrl: ${isJackettUrl}`);
                 
                 // Check if this is a direct streaming URL (not a magnet, torrent file, or Jackett URL)
-                const isDirectUrl = link.startsWith('http') && 
-                                    !link.includes('.torrent') && 
-                                    !link.startsWith('magnet:') &&
+                const isDirectUrl = externalUrl.startsWith('http') && 
+                                    !externalUrl.includes('.torrent') && 
+                                    !externalUrl.startsWith('magnet:') &&
                                     !isJackettUrl;
-                const isMagnet = link.startsWith('magnet:');
+                const isMagnet = externalUrl.startsWith('magnet:');
                 
                 console.log(`[Play] isDirectUrl: ${isDirectUrl}, isMagnet: ${isMagnet}`);
                 
                 // For direct URLs from addons like Nuvio, play directly through transcoder
                 if (isDirectUrl && !isMagnet) {
-                    console.log(`[Direct Stream] Playing direct URL: ${link.substring(0, 80)}...`);
+                    console.log(`[Direct Stream] Playing direct URL: ${externalUrl.substring(0, 80)}...`);
                 
                 // Get provider info for Next Episode feature
                 let providerUrl = '';
@@ -1835,7 +2049,7 @@ const displaySources = (sources) => {
                 
                 // Launch player with direct URL using iframe overlay
                 openPlayerInIframe({
-                    url: link,
+                    url: externalUrl,
                     tmdbId: currentTmdbId || id,
                     imdbId: currentImdbId,
                     seasonNum: targetS,
@@ -1852,22 +2066,22 @@ const displaySources = (sources) => {
             }
 
             // For torrent files or magnets, continue with existing logic
-            let activeLink = link;
+            let activeLink = externalUrl;
             
             // Check if this is a torrent download URL that needs resolution
             // This includes: .torrent files, Jackett /dl/ URLs, and other torrent download endpoints
-            const needsResolution = link.startsWith('http') && !link.startsWith('magnet:') && (
-                link.includes('.torrent') ||
-                link.includes('/dl/') ||           // Jackett download URLs
-                link.includes('/download') ||      // Common torrent download paths
-                link.includes('jackett_apikey') || // Jackett API key in URL
-                link.includes('apikey=')           // Generic API key patterns
+            const needsResolution = externalUrl.startsWith('http') && !externalUrl.startsWith('magnet:') && (
+                externalUrl.includes('.torrent') ||
+                externalUrl.includes('/dl/') ||           // Jackett download URLs
+                externalUrl.includes('/download') ||      // Common torrent download paths
+                externalUrl.includes('jackett_apikey') || // Jackett API key in URL
+                externalUrl.includes('apikey=')           // Generic API key patterns
             );
             
             if (needsResolution) {
                 showPlayLoading('Resolving torrent...');
-                console.log(`[Torrent] Resolving download URL: ${link.substring(0, 100)}...`);
-                activeLink = await resolveTorrent(link, source.title);
+                console.log(`[Torrent] Resolving download URL: ${externalUrl.substring(0, 100)}...`);
+                activeLink = await resolveTorrent(externalUrl, source.title);
                 if (!activeLink) {
                     hidePlayLoading();
                     alert('Failed to resolve torrent link. Please try another source.');
@@ -2129,20 +2343,20 @@ const displaySources = (sources) => {
                     alert('Error fetching torrent: ' + err.message);
                 }
             }
-            } catch (err) {
-                // Catch-all for any unexpected errors
-                console.error('[Play] Unexpected error:', err);
-                hidePlayLoading();
-            }
-        };
+        } catch (err) {
+            // Catch-all for any unexpected errors
+            console.error('[Play] Unexpected error:', err);
+            hidePlayLoading();
+        }
+    };
 
-        // Animation delay
-        setTimeout(() => {
-            if(card) card.classList.remove('opacity-0', 'translate-x-4');
-        }, index * 50);
+    // Animation delay
+    setTimeout(() => {
+        if(card) card.classList.remove('opacity-0', 'translate-x-4');
+    }, index * 50);
 
-        sourcesList.appendChild(clone);
-    });
+    sourcesList.appendChild(clone);
+});
 };
 
 const loadEpisodes = async (seasonNum) => {

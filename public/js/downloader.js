@@ -5,7 +5,7 @@ const DOWNLOADER_BASE_URL = 'http://localhost:6987';
 
 // Use global TMDB_API_KEY from config.js
 function getTmdbApiKey() {
-    return window.TMDB_API_KEY || 'b3556f3b206e16f82df4d1f6fd4545e6';
+    return window.TMDB_API_KEY || 'c3515fdc674ea2bd7b514f4bc3616a4a';
 }
 
 let downloaderType = 'movies'; // 'movies' | 'tv'

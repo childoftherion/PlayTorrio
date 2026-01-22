@@ -1,6 +1,6 @@
 // Configuration and Constants
 // API configuration
-const TMDB_API_KEY = 'b3556f3b206e16f82df4d1f6fd4545e6';
+const TMDB_API_KEY = 'c3515fdc674ea2bd7b514f4bc3616a4a';
 const API_BASE_URL = 'http://localhost:6987/api';
 
 // Export to window for other modules

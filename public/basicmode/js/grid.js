@@ -8,6 +8,7 @@ const name = params.get('name');
 const addonId = params.get('addonId');
 const catalogId = params.get('catalogId');
 const catalogType = params.get('catalogType');
+const searchQuery = params.get('search'); // For addon catalog search
 
 const pageTitle = document.getElementById('page-title');
 const contentGrid = document.getElementById('content-grid');
@@ -274,7 +275,13 @@ const fetchAddonContent = async () => {
 
         // Construct catalog URL. Stremio pagination often uses 'skip={n}' in extra path or query
         // Standard: /catalog/{type}/{id}/skip={skip}.json
+        // With search: /catalog/{type}/{id}/search={query}.json
         let targetUrl = `${url}/catalog/${catalogType}/${catalogId}`;
+        
+        // Add search parameter if present
+        if (searchQuery) {
+            targetUrl += `/search=${encodeURIComponent(searchQuery)}`;
+        }
         
         if (addonSkip > 0) {
             targetUrl += `/skip=${addonSkip}`;
@@ -295,8 +302,45 @@ const fetchAddonContent = async () => {
             return;
         }
 
+        // Enhance items with TMDB data if they have IMDB IDs but no titles
+        const enhancedItems = await Promise.all(items.map(async (item) => {
+            // If item has IMDB ID but no title, try to get title from TMDB
+            if (item.id && item.id.startsWith('tt') && !item.title && !item.name) {
+                try {
+                    const { findByExternalId } = await import('./api.js');
+                    const findResults = await findByExternalId(item.id, 'imdb_id');
+                    
+                    let tmdbResult = null;
+                    if (item.type === 'movie' && findResults.movie_results && findResults.movie_results.length > 0) {
+                        tmdbResult = findResults.movie_results[0];
+                    } else if ((item.type === 'tv' || item.type === 'series') && findResults.tv_results && findResults.tv_results.length > 0) {
+                        tmdbResult = findResults.tv_results[0];
+                    }
+                    
+                    if (tmdbResult) {
+                        // Enhance the item with TMDB data while keeping addon-specific fields
+                        return {
+                            ...item,
+                            tmdb_id: tmdbResult.id, // Store TMDB ID for proper linking
+                            title: tmdbResult.title,
+                            name: tmdbResult.name,
+                            overview: tmdbResult.overview,
+                            release_date: tmdbResult.release_date,
+                            first_air_date: tmdbResult.first_air_date,
+                            vote_average: tmdbResult.vote_average,
+                            // Keep original poster if available, otherwise use TMDB
+                            poster: item.poster || (tmdbResult.poster_path ? `https://image.tmdb.org/t/p/w500${tmdbResult.poster_path}` : null)
+                        };
+                    }
+                } catch (e) {
+                    console.warn('[Addon] Failed to enhance item with TMDB data:', item.id, e);
+                }
+            }
+            return item;
+        }));
+
         let newItemsCount = 0;
-        items.forEach(item => {
+        enhancedItems.forEach(item => {
             // Set type from catalog type, normalize 'series' to 'tv'
             if (!item.type) item.type = catalogType;
             let itemType = item.type;
@@ -340,9 +384,29 @@ const fetchAddonContent = async () => {
 };
 
 const createCard = (item) => {
-    // Normalization
-    const poster = item.poster_path ? getImageUrl(item.poster_path, 'w500') : (item.poster || 'https://via.placeholder.com/500x750/1a1a2e/ffffff?text=No+Poster');
-    const titleText = item.title || item.name;
+    // Normalization - handle both TMDB and addon poster formats
+    let poster;
+    if (item.poster_path) {
+        // TMDB format
+        poster = getImageUrl(item.poster_path, 'w500');
+    } else if (item.poster) {
+        // Direct URL from addon
+        poster = item.poster;
+    } else {
+        // Fallback placeholder
+        poster = 'https://via.placeholder.com/500x750/1a1a2e/ffffff?text=No+Poster';
+    }
+    
+    let titleText = item.title || item.name;
+    
+    // If no title and ID looks like IMDB ID, try to get title from TMDB
+    if (!titleText && item.id && item.id.startsWith('tt')) {
+        titleText = item.id; // Use IMDB ID as temporary title
+        
+        // For addon items with IMDB IDs, we could potentially fetch the title from TMDB
+        // but for now, just use the IMDB ID as a fallback
+    }
+    
     let itemType = item.media_type || item.type;
     
     // If still no type, try to infer from properties
@@ -382,37 +446,76 @@ const createCard = (item) => {
     const ratingValue = clone.querySelector('.rating-value');
 
     // For addon items, check if ID is an IMDB ID (starts with 'tt')
-    // If so, we can try to look it up via TMDB, otherwise use addon meta endpoint
+    // If so, we need to convert it to TMDB ID for proper details page functionality
     if (item._addonId) {
-        // Use addon meta endpoint for details
-        link.href = `details.html?type=${itemType}&id=${encodeURIComponent(itemId)}&addonId=${item._addonId}`;
-        
         // Store catalog metadata in sessionStorage for addons that don't support /meta endpoint
-        link.addEventListener('click', (e) => {
-            console.log('[Grid] Caching addon metadata for:', itemId);
-            const catalogMeta = {
-                id: item.id,
-                name: item.name || item.title,
-                // Support both Stremio format (poster) and TMDB format (poster_path)
-                poster: item.poster || item.poster_path,
-                background: item.background || item.backdrop_path || item.poster || item.poster_path,
-                logo: item.logo,
-                // Support both formats
-                description: item.description || item.overview,
-                genre: item.genre || item.genres || [],
-                type: item.type || itemType,
-                releaseInfo: item.releaseInfo || item.release_date || item.first_air_date,
-                imdbRating: item.imdbRating || item.vote_average,
-                runtime: item.runtime,
-                director: item.director,
-                cast: item.cast,
-                videos: item.videos,
-                behaviorHints: item.behaviorHints,
-                posterShape: item.posterShape
-            };
-            console.log('[Grid] Cached metadata:', catalogMeta);
-            sessionStorage.setItem(`addon_meta_${item._addonId}_${itemId}`, JSON.stringify(catalogMeta));
-        });
+        const catalogMeta = {
+            id: item.id,
+            name: item.name || item.title,
+            // Support both Stremio format (poster) and TMDB format (poster_path)
+            poster: item.poster || item.poster_path,
+            background: item.background || item.backdrop_path || item.poster || item.poster_path,
+            logo: item.logo,
+            // Support both formats
+            description: item.description || item.overview,
+            genre: item.genre || item.genres || [],
+            type: item.type || itemType,
+            releaseInfo: item.releaseInfo || item.release_date || item.first_air_date,
+            imdbRating: item.imdbRating || item.vote_average,
+            runtime: item.runtime,
+            director: item.director,
+            cast: item.cast,
+            videos: item.videos,
+            behaviorHints: item.behaviorHints,
+            posterShape: item.posterShape
+        };
+        
+        // If the item has a TMDB ID from enhancement, use that for the link
+        if (item.tmdb_id) {
+            link.href = `details.html?type=${itemType}&id=${item.tmdb_id}`;
+        } else if (item.id && item.id.startsWith('tt')) {
+            // IMDB ID - need to convert to TMDB ID on click
+            link.href = `details.html?type=${itemType}&id=${encodeURIComponent(itemId)}&addonId=${item._addonId}`;
+            
+            // Add click handler to convert IMDB ID to TMDB ID
+            link.addEventListener('click', async (e) => {
+                e.preventDefault();
+                
+                try {
+                    console.log('[Grid] Converting IMDB ID to TMDB ID:', itemId);
+                    const { findByExternalId } = await import('./api.js');
+                    const findResults = await findByExternalId(itemId, 'imdb_id');
+                    
+                    let tmdbResult = null;
+                    if (itemType === 'movie' && findResults.movie_results && findResults.movie_results.length > 0) {
+                        tmdbResult = findResults.movie_results[0];
+                    } else if ((itemType === 'tv' || itemType === 'series') && findResults.tv_results && findResults.tv_results.length > 0) {
+                        tmdbResult = findResults.tv_results[0];
+                    }
+                    
+                    if (tmdbResult) {
+                        console.log('[Grid] Found TMDB match:', tmdbResult.title || tmdbResult.name, tmdbResult.id);
+                        // Navigate to details page with TMDB ID
+                        const finalType = itemType === 'series' ? 'tv' : itemType;
+                        window.location.href = `details.html?type=${finalType}&id=${tmdbResult.id}`;
+                    } else {
+                        console.warn('[Grid] No TMDB match found for IMDB ID:', itemId);
+                        alert('Could not find this content on TMDB.');
+                    }
+                } catch (error) {
+                    console.error('[Grid] TMDB lookup error:', error);
+                    alert('Failed to lookup content: ' + error.message);
+                }
+            });
+        } else {
+            // Regular addon ID
+            link.href = `details.html?type=${itemType}&id=${encodeURIComponent(itemId)}&addonId=${item._addonId}`;
+        }
+        
+        // Cache metadata for addon details page
+        console.log('[Grid] Caching addon metadata for:', itemId);
+        console.log('[Grid] Cached metadata:', catalogMeta);
+        sessionStorage.setItem(`addon_meta_${item._addonId}_${itemId}`, JSON.stringify(catalogMeta));
     } else {
         link.href = `details.html?type=${itemType}&id=${itemId}`;
     }

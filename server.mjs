@@ -255,7 +255,7 @@ export function startServer(userDataPath, executablePath = null, ffmpegBin = nul
     app.use('/api/tmdb', async (req, res) => {
         const endpoint = req.url; 
         const query = req.query;
-        const API_KEY = 'b3556f3b206e16f82df4d1f6fd4545e6';
+        const API_KEY = 'c3515fdc674ea2bd7b514f4bc3616a4a';
         const BASE_URL = 'https://api.themoviedb.org/3';
         
         const cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;

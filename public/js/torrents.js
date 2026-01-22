@@ -7,7 +7,7 @@ const API_BASE_URL = window.API_BASE_URL || 'http://localhost:6987/api';
 
 // Access global variables from other modules via window
 // These are defined in movies.js, config.js, streaming.js and exported to window
-const TMDB_API_KEY = window.TMDB_API_KEY || 'b3556f3b206e16f82df4d1f6fd4545e6';
+const TMDB_API_KEY = window.TMDB_API_KEY || 'c3515fdc674ea2bd7b514f4bc3616a4a';
 
 // Helper getters for global state (these are set by movies.js)
 function getCurrentContent() { return window.currentContent; }

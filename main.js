@@ -2155,7 +2155,7 @@ function start111477() {
         // Spawn electron binary as node
         const logPath = path.join(app.getPath('userData'), '111477.log');
         const logStream = fs.createWriteStream(logPath, { flags: 'a' });
-    const childEnv = { ...process.env, PORT: '3003', ELECTRON_RUN_AS_NODE: '1', NODE_PATH: NODE_PATH_VALUE, TMDB_API_KEY: 'b3556f3b206e16f82df4d1f6fd4545e6' };
+    const childEnv = { ...process.env, PORT: '3003', ELECTRON_RUN_AS_NODE: '1', NODE_PATH: NODE_PATH_VALUE, TMDB_API_KEY: 'c3515fdc674ea2bd7b514f4bc3616a4a' };
         svc111477Proc = spawn(process.execPath, [entry], {
             stdio: ['ignore', 'pipe', 'pipe'],
             env: childEnv,
@@ -2211,7 +2211,7 @@ function start111477() {
                                 const nodeCmd = process.platform === 'win32' ? 'node.exe' : 'node';
                                 svc111477Proc = spawn(nodeCmd, [entry], {
                                     stdio: ['ignore', 'pipe', 'pipe'],
-                                    env: { ...process.env, PORT: '3003', TMDB_API_KEY: 'b3556f3b206e16f82df4d1f6fd4545e6' },
+                                    env: { ...process.env, PORT: '3003', TMDB_API_KEY: 'c3515fdc674ea2bd7b514f4bc3616a4a' },
                                     cwd: path.dirname(entry),
                                     shell: false
                                 });
@@ -3071,7 +3071,7 @@ ipcMain.handle('spawn-mpvjs-player', async (event, { url, tmdbId, imdbId, season
     if (!finalImdbId && finalTmdbId) {
         try {
             const useType = (seasonNum || type === 'tv') ? 'tv' : 'movie';
-            const apiKey = 'b3556f3b206e16f82df4d1f6fd4545e6'; 
+            const apiKey = 'c3515fdc674ea2bd7b514f4bc3616a4a'; 
             const tmdbUrl = `https://api.themoviedb.org/3/${useType}/${finalTmdbId}/external_ids?api_key=${apiKey}`;
             
             const response = await fetch(tmdbUrl);

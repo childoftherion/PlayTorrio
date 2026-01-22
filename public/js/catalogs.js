@@ -168,6 +168,7 @@ async function loadCatalogItems() {
         const addons = Array.isArray(addonsData) ? addonsData : (addonsData.addons || []);
         const addon = addons.find(a => a.manifest.id === catalogBrowseState.addonId);
         
+        
         if (!addon) throw new Error('Addon not found');
         
         let url = addon.url.replace('/manifest.json', '');
@@ -259,8 +260,13 @@ function createCatalogCard(item, itemType, addonId) {
         </div>
     `;
     
-    card.addEventListener('click', () => {
-        // Cache metadata before navigating
+    card.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        
+        console.log('[CatalogCard] Card clicked! Opening modal for:', item.id);
+        
+        // Cache metadata before opening modal
         const catalogMeta = {
             id: item.id,
             name: item.name || item.title,
@@ -281,8 +287,29 @@ function createCatalogCard(item, itemType, addonId) {
         };
         sessionStorage.setItem(`addon_meta_${addonId}_${item.id}`, JSON.stringify(catalogMeta));
         
-        // Navigate to basicmode details page (which has full addon support)
-        window.location.href = `basicmode/details.html?type=${itemType}&id=${encodeURIComponent(item.id)}&addonId=${addonId}`;
+        // Create a movie object compatible with openDetailsModal
+        const movieObj = {
+            id: item.id,
+            title: item.name || item.title,
+            name: item.name || item.title,
+            poster_path: poster,
+            backdrop_path: item.background || item.backdrop_path || poster,
+            overview: item.description || item.overview || '',
+            vote_average: rating || 0,
+            release_date: item.releaseInfo || item.year || '',
+            first_air_date: item.releaseInfo || item.year || '',
+            media_type: itemType,
+            _addonId: addonId
+        };
+        
+        console.log('[CatalogCard] Calling openDetailsModal with:', movieObj);
+        
+        // Open the details modal using the existing function
+        if (typeof window.openDetailsModal === 'function') {
+            window.openDetailsModal(movieObj, itemType);
+        } else {
+            console.error('[CatalogBrowse] openDetailsModal function not found');
+        }
     });
     
     return card;

@@ -182,6 +182,8 @@ export const parseAddonStream = (stream, addonName) => {
         magnet: playUrl,
         quality: quality,
         codec: fullText.includes('x265') || fullText.includes('hevc') ? 'HEVC' : 'x264',
-        hdr: fullText.includes('hdr') ? 'HDR' : (fullText.includes('dv') ? 'Dolby Vision' : null)
+        hdr: fullText.includes('hdr') ? 'HDR' : (fullText.includes('dv') ? 'Dolby Vision' : null),
+        externalUrl: stream.externalUrl, // Preserve externalUrl for stremio:/// links
+        url: stream.url || stream.externalUrl // Also set url property
     };
 };

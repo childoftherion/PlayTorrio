@@ -934,6 +934,15 @@ document.addEventListener('DOMContentLoaded', () => {
     initWelcomePopup();
     loadSponsorVisibility(); // Load sponsor visibility on startup
     
+    // Check for search parameter in URL
+    const urlParams = new URLSearchParams(window.location.search);
+    const searchQuery = urlParams.get('search');
+    if (searchQuery && searchInput) {
+        searchInput.value = searchQuery;
+        // Trigger search
+        handleSearch(searchQuery);
+    }
+    
     // Listeners
     settingsBtn?.addEventListener('click', openSettings);
     closeSettingsBtn?.addEventListener('click', closeSettings);
