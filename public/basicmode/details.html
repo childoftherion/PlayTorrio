@@ -560,10 +560,18 @@
                 // Clear any previous content
                 this.iframe.src = 'about:blank';
                 
-                // Enable pointer events and show overlay
-                this.overlay.style.pointerEvents = 'auto';
-                this.overlay.style.visibility = 'visible';
-                this.overlay.classList.remove('hidden');
+                // Reset all styles and show overlay
+                if (this.overlay) {
+                    // Clear any conflicting inline styles first
+                    this.overlay.style.pointerEvents = '';
+                    this.overlay.style.visibility = '';
+                    this.overlay.style.display = '';
+                    
+                    // Now show the overlay
+                    this.overlay.classList.remove('hidden');
+                    this.overlay.style.pointerEvents = 'auto';
+                }
+                
                 document.body.style.overflow = 'hidden';
                 
                 // Small delay to ensure clean state
@@ -602,23 +610,18 @@
                     this.isAltEngine = false;
                 }
                 
-                // CRITICAL: Disable pointer events IMMEDIATELY to remove the invisible wall
+                // Hide the overlay properly
                 if (this.overlay) {
-                    this.overlay.style.pointerEvents = 'none';
-                    this.overlay.style.visibility = 'hidden';
-                    this.overlay.style.display = 'none';
                     this.overlay.classList.add('hidden');
+                    // Reset all inline styles to avoid conflicts
+                    this.overlay.style.pointerEvents = '';
+                    this.overlay.style.visibility = '';
+                    this.overlay.style.display = '';
                 }
                 
                 // Restore body
                 document.body.style.overflow = '';
                 document.body.style.pointerEvents = '';
-                
-                // Force multiple reflows to ensure changes are applied
-                if (this.overlay) {
-                    void this.overlay.offsetHeight;
-                    void document.body.offsetHeight;
-                }
                 
                 // Clear iframe after a delay
                 setTimeout(() => {
@@ -626,16 +629,8 @@
                         this.iframe.src = 'about:blank';
                     }
                     
-                    // Triple-check everything is disabled
-                    if (this.overlay) {
-                        this.overlay.style.pointerEvents = 'none';
-                        this.overlay.style.visibility = 'hidden';
-                        this.overlay.style.display = 'none';
-                        this.overlay.classList.add('hidden');
-                    }
-                    
                     this.isClosing = false;
-                    console.log('[PlayerOverlay] Player fully closed and disabled');
+                    console.log('[PlayerOverlay] Player fully closed and cleaned up');
                 }, 150);
             }
         };
