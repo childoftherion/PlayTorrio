@@ -27,8 +27,15 @@ export function registerStremioRoutes(app, userDataPath, ffmpegBin = null, ffpro
             const { magnet } = req.query;
             if (!magnet) return res.status(400).json({ error: 'Missing magnet' });
             
+            // Auto-start engine if not ready (similar to alt-torrent-files)
             if (!StremioEngine.isEngineReady()) {
-                return res.status(503).json({ error: 'Engine not ready' });
+                console.log('[StremioRoutes] Engine not ready, starting...');
+                try {
+                    await StremioEngine.startEngine(userDataPath);
+                } catch (startError) {
+                    console.error('[StremioRoutes] Failed to start engine:', startError.message);
+                    return res.status(503).json({ error: 'Failed to start engine: ' + startError.message });
+                }
             }
             
             console.log(`[StremioRoutes] Getting files: ${magnet.substring(0, 60)}...`);
@@ -72,8 +79,15 @@ export function registerStremioRoutes(app, userDataPath, ffmpegBin = null, ffpro
                 return res.status(400).json({ error: 'Missing hash or file index' });
             }
             
+            // Auto-start engine if not ready
             if (!StremioEngine.isEngineReady()) {
-                return res.status(503).json({ error: 'Engine not ready' });
+                console.log('[StremioRoutes] Engine not ready for streaming, starting...');
+                try {
+                    await StremioEngine.startEngine(userDataPath);
+                } catch (startError) {
+                    console.error('[StremioRoutes] Failed to start engine:', startError.message);
+                    return res.status(503).json({ error: 'Failed to start engine: ' + startError.message });
+                }
             }
             
             selectedFiles.set(hash, Number(fileIndex));

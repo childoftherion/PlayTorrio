@@ -2277,6 +2277,11 @@ const displaySources = (sources) => {
                     console.log(`[TorrentEngine] Using ${engineConfig.engine} engine via ${apiEndpoint}`);
                     
                     const res = await fetch(`${apiEndpoint}?magnet=${encodeURIComponent(activeLink)}`);
+                    
+                    if (!res.ok) {
+                        throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+                    }
+                    
                     const data = await res.json();
                     
                     if (data && !data.error) {

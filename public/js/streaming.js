@@ -470,10 +470,11 @@ async function startWebTorrentStream(magnet) {
             : `${API_BASE_URL}/torrent-files?magnet=${encodeURIComponent(magnet)}`;
         
         console.log('[Streaming] Fetching files from:', filesUrl);
+        
         const response = await fetch(filesUrl);
         
         if (!response.ok) {
-            throw new Error('Failed to get torrent files');
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
         
         const data = await response.json();
