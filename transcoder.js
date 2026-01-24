@@ -86,7 +86,7 @@ async function detectBestEncoder() {
   // Test each encoder with a quick benchmark
   for (const enc of candidates) {
     try {
-      const speed = await benchmarkEncoder(enc.name);
+      const speed = await benchmarkEncoder(enc);
       if (speed > 0) {
         encoderBenchmarks.set(enc.name, speed);
         console.log(`[UltraTranscoder] ${enc.type}: ${speed.toFixed(1)}x realtime`);
@@ -99,16 +99,25 @@ async function detectBestEncoder() {
   return { name: 'libx264', type: 'CPU (libx264)', hwaccel: 'auto', priority: 99 };
 }
 
-async function benchmarkEncoder(encoderName) {
+async function benchmarkEncoder(encoderConfig) {
   return new Promise((resolve) => {
     const startTime = Date.now();
     const args = [
       '-hide_banner', '-loglevel', 'error',
+    ];
+
+    // FIX: Explicitly add hwaccel for the benchmark test
+    // Some builds (like Jellyfin FFmpeg) fail without this init
+    if (encoderConfig.hwaccel && encoderConfig.hwaccel !== 'auto') {
+      args.push('-hwaccel', encoderConfig.hwaccel);
+    }
+
+    args.push(
       '-f', 'lavfi', '-i', 'testsrc=duration=1:size=1280x720:rate=30',
-      '-c:v', encoderName,
+      '-c:v', encoderConfig.name,
       '-frames:v', '30',
       '-f', 'null', '-'
-    ];
+    );
     
     const proc = spawn(FFMPEG, args, { stdio: ['ignore', 'ignore', 'pipe'] });
     let failed = false;
@@ -218,8 +227,8 @@ function prewarmStream(streamUrl, metadata) {
   const prewarm = { buffer: null, ready: false, chunks };
   prewarmCache.set(streamKey, prewarm);
   
-  const needsTranscode = checkNeedsTranscode(metadata);
-  const args = buildFFmpegArgs(streamUrl, 0, needsTranscode, metadata, { 
+  const status = checkNeedsTranscode(metadata);
+  const args = buildFFmpegArgs(streamUrl, 0, status, metadata, { 
     duration: CONFIG.PREWARM_SECONDS,
     fastStart: true 
   });
@@ -282,14 +291,15 @@ export async function handleTranscodeStream(req, res) {
     } catch {}
   }
 
-  const needsTranscode = metadata ? checkNeedsTranscode(metadata) : true;
+  const status = metadata ? checkNeedsTranscode(metadata) : { video: true, audio: true, any: true };
   const encoder = detectedEncoder || { name: 'libx264', type: 'CPU', hwaccel: 'auto' };
   
   // For HEVC with seeking, always use software to avoid HW decoder issues
   const isHEVC = metadata?.videoCodec?.toLowerCase() === 'hevc' || metadata?.videoCodec?.toLowerCase() === 'h265';
   const actualEncoder = (isHEVC && startTime > 0) ? { name: 'libx264', type: 'CPU', hwaccel: 'auto' } : encoder;
   
-  console.log(`[UltraTranscoder] ${startTime}s [${actualEncoder.name}]${isAltEngine ? ' (ALT-ENGINE)' : ''}${needsTranscode ? '' : ' (remux)'}`);
+  const modeStr = status.video ? 'TRANSCODE-VIDEO' : (status.audio ? 'TRANSCODE-AUDIO' : 'REMUX/COPY');
+  console.log(`[UltraTranscoder] ${startTime}s [${actualEncoder.name}]${isAltEngine ? ' (ALT-ENGINE)' : ''} [${modeStr}]`);
 
   // Set response headers
   res.setHeader('Content-Type', 'video/mp4');
@@ -305,12 +315,12 @@ export async function handleTranscodeStream(req, res) {
       res.write(prewarm.buffer);
       prewarmCache.delete(streamKey);
       // Continue with live transcoding from where prewarm ended
-      return startLiveTranscode(req, res, streamUrl, CONFIG.PREWARM_SECONDS, metadata, needsTranscode, actualEncoder, streamKey);
+      return startLiveTranscode(req, res, streamUrl, CONFIG.PREWARM_SECONDS, metadata, status, actualEncoder, streamKey);
     }
   }
 
   // Start fresh transcode
-  startLiveTranscode(req, res, streamUrl, startTime, metadata, needsTranscode, actualEncoder, streamKey);
+  startLiveTranscode(req, res, streamUrl, startTime, metadata, status, actualEncoder, streamKey);
 }
 
 function startLiveTranscode(req, res, streamUrl, startTime, metadata, needsTranscode, encoder, streamKey, retryCount = 0) {
@@ -397,43 +407,45 @@ function cacheChunk(streamKey, startTime, chunk) {
 // FFMPEG ARGUMENT BUILDER - OPTIMIZED FOR SPEED
 // ============================================================================
 
-function buildFFmpegArgs(inputUrl, startTime, needsTranscode, metadata, options = {}) {
+function buildFFmpegArgs(inputUrl, startTime, status, metadata, options = {}) {
   const targetUrl = inputUrl.replace('localhost', '127.0.0.1');
   const encoder = options.encoder || detectedEncoder?.name || 'libx264';
   const hwaccel = options.hwaccel || detectedEncoder?.hwaccel || 'auto';
   const isHEVC = metadata?.videoCodec?.toLowerCase() === 'hevc' || metadata?.videoCodec?.toLowerCase() === 'h265';
   
+  // Normalize status to handle granular video/audio
+  const transcodeVideo = (typeof status === 'boolean' ? status : status?.video);
+  const transcodeAudio = (typeof status === 'boolean' ? status : status?.audio);
+
   const args = [
     '-hide_banner',
-    '-loglevel', 'error',  // Only show real errors
-    
-    // Minimal probing - enough for stream detection
+    '-loglevel', 'error',
     '-fflags', '+genpts+discardcorrupt+igndts',
     '-probesize', '5M',
     '-analyzeduration', '5M',
   ];
 
-  // Hardware decoding - skip for HEVC when seeking (causes issues)
+  // FIX: Force synchronization
+  args.push('-fps_mode', 'cfr');
+
+  // Hardware decoding configuration
   const useHwDecode = !isHEVC || startTime === 0;
-  
   if (useHwDecode && !options.forceSoftware) {
     if (hwaccel === 'cuda') {
-      args.push('-hwaccel', 'cuda');
+      args.push('-hwaccel', 'cuda', '-hwaccel_output_format', 'cuda');
     } else if (hwaccel === 'qsv') {
-      args.push('-hwaccel', 'qsv');
+      args.push('-hwaccel', 'qsv', '-hwaccel_output_format', 'qsv');
     } else if (hwaccel === 'd3d11va') {
-      args.push('-hwaccel', 'd3d11va');
+      args.push('-hwaccel', 'd3d11va', '-hwaccel_output_format', 'd3d11');
     } else if (hwaccel === 'videotoolbox') {
       args.push('-hwaccel', 'videotoolbox');
     }
   }
 
-  // Seek BEFORE input (fast seek)
   if (startTime > 0) {
     args.push('-ss', startTime.toString());
   }
 
-  // Network input options
   args.push(
     '-reconnect', '1',
     '-reconnect_streamed', '1',
@@ -441,32 +453,51 @@ function buildFFmpegArgs(inputUrl, startTime, needsTranscode, metadata, options 
     '-i', targetUrl,
   );
 
-  // Duration limit for pre-warming
   if (options.duration) {
     args.push('-t', options.duration.toString());
   }
 
-  // Stream mapping - use ? to make optional
+  // FIX: Prevent buffering drift
+  args.push('-max_interleave_delta', '0');
+
   args.push('-map', '0:v:0?', '-map', '0:a:0?');
 
-  if (needsTranscode) {
+  // VIDEO STREAM HANDLING
+  if (transcodeVideo) {
     const useEncoder = options.forceSoftware ? 'libx264' : encoder;
     args.push('-c:v', useEncoder);
     
-    // Encoder-specific optimizations
+    // Hardware-accelerated scaling and filtering
+    const filters = [];
+    const needScaling = metadata?.width > 1920;
+
+    if (needScaling) {
+       if (hwaccel === 'cuda' && !options.forceSoftware) {
+         filters.push('scale_cuda=1920:-2');
+       } else if (hwaccel === 'qsv' && !options.forceSoftware) {
+         filters.push('scale_qsv=w=1920:h=-2');
+       } else {
+         filters.push('scale=1920:-2');
+       }
+    }
+
+    if (filters.length > 0) {
+      args.push('-vf', filters.join(','));
+    }
+
     if (useEncoder === 'h264_nvenc') {
       args.push(
-        '-preset', 'p4',
-        '-tune', 'ull',
-        '-rc', 'vbr',
-        '-cq', '23',
+        '-preset', 'p2',
+        '-b:v', '8M',
+        '-maxrate', '8M',
+        '-bufsize', '16M',
         '-bf', '0',
         '-g', '60',
       );
     } else if (useEncoder === 'h264_qsv') {
       args.push(
-        '-preset', 'faster',
-        '-global_quality', '23',
+        '-preset', 'veryfast',
+        '-global_quality', '26',
         '-bf', '0',
         '-g', '60',
       );
@@ -484,38 +515,35 @@ function buildFFmpegArgs(inputUrl, startTime, needsTranscode, metadata, options 
         '-g', '60',
       );
     } else {
-      // libx264 - RELIABLE
       args.push(
         '-preset', 'ultrafast',
         '-tune', 'zerolatency',
-        '-crf', '23',
+        '-crf', '25',
         '-profile:v', 'high',
-        '-level', '4.1',
         '-bf', '0',
         '-g', '60',
         '-threads', '0',
+        '-pix_fmt', 'yuv420p'
       );
     }
+  } else {
+    args.push('-c:v', 'copy');
+  }
 
-    // Pixel format
-    args.push('-pix_fmt', 'yuv420p');
-
-    // Audio encoding
+  // AUDIO STREAM HANDLING
+  if (transcodeAudio) {
     args.push(
       '-c:a', 'aac',
       '-b:a', '192k',
       '-ac', '2',
       '-ar', '48000',
+      '-af', 'aresample=async=1' // FIX: Resample to match video timestamp
     );
   } else {
-    // Remux only
-    args.push('-c:v', 'copy');
-    
-    const audioOk = ['aac', 'mp3', 'opus'].includes(metadata?.audioCodec?.toLowerCase());
-    args.push('-c:a', audioOk ? 'copy' : 'aac', '-b:a', '192k');
+    args.push('-c:a', 'copy');
   }
 
-  // Output format - fragmented MP4
+  // Output format
   args.push(
     '-movflags', 'frag_keyframe+empty_moov+default_base_moof+faststart',
     '-frag_duration', '500000',
@@ -539,7 +567,13 @@ function checkNeedsTranscode(metadata) {
   const videoOk = ['h264'].includes(metadata.videoCodec?.toLowerCase());
   const audioOk = ['aac', 'mp3', 'opus', 'flac'].includes(metadata.audioCodec?.toLowerCase());
   const containerOk = ['mp4', 'mov'].some(c => metadata.container?.toLowerCase().includes(c));
-  return !(videoOk && audioOk && containerOk);
+  
+  return {
+    video: !videoOk,
+    audio: !audioOk,
+    any: !videoOk || !audioOk || !containerOk,
+    isRemux: videoOk && audioOk && !containerOk
+  };
 }
 
 // Cleanup on exit
