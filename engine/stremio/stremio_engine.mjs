@@ -13,7 +13,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // Engine configuration
-const ENGINE_PORT = 11470;
+const ENGINE_PORT = 6988;
 const ENGINE_URL = `http://127.0.0.1:${ENGINE_PORT}`;
 
 let engineProcess = null;
