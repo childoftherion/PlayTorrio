@@ -6822,6 +6822,8 @@ for (let i = 0; i < 10; i++) {
             } else {
                 // Linux: Check for AppImage or extracted binary in bundle folder
                 const possiblePaths = [
+                    // Specific AppImage name from v1.8.27 release
+                    path.join(playerDir, 'PlayTorrio-Linux-x64.AppImage'),
                     // AppImage in root (glob pattern - find any AppImage)
                     ...(() => {
                         try {
@@ -7249,11 +7251,16 @@ for (let i = 0; i < 10; i++) {
                 }
             } else {
                 // Linux: Check for AppImage or extracted binary in bundle folder
+                // Start with specific AppImage name from v1.8.27 release
+                searchedPaths = [
+                    path.join(playerDir, 'PlayTorrio-Linux-x64.AppImage'),
+                ];
+                
                 try {
-                    // Check root directory
+                    // Check root directory for any AppImage
                     const files = fs.readdirSync(playerDir);
                     const appImages = files.filter(f => f.endsWith('.AppImage'));
-                    searchedPaths = appImages.map(f => path.join(playerDir, f));
+                    searchedPaths.push(...appImages.map(f => path.join(playerDir, f)));
                     
                     // Check nested directory
                     const nestedDir = path.join(playerDir, 'PlayTorrio-Linux-x64');

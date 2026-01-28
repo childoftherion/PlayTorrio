@@ -56,7 +56,7 @@ jobs:
           New-Item -ItemType Directory -Path PlayTorrioPlayer -Force
           
           # Download Windows version from V2
-          $url = "https://github.com/ayman708-UX/PlayTorrioPlayerV2/releases/download/v1.8.19/PlayTorrio-Windows-x64.zip"
+          $url = "https://github.com/ayman708-UX/PlayTorrioPlayerV2/releases/download/v1.8.27/PlayTorrio-Windows-x64.zip"
           $zipPath = "PlayTorrioPlayer\player.zip"
           Invoke-WebRequest -Uri $url -OutFile $zipPath
           
@@ -181,67 +181,19 @@ jobs:
           rm -rf PlayTorrioPlayer
           mkdir -p PlayTorrioPlayer
           
-          # Download Linux tar.gz from V2
-          curl -L -o PlayTorrioPlayer/player.tar.gz \
-            "https://github.com/ayman708-UX/PlayTorrioPlayerV2/releases/download/v1.8.19/PlayTorrio-Linux-x64.tar.gz"
+          # Download Linux AppImage from V2
+          curl -L -o PlayTorrioPlayer/PlayTorrio-Linux-x64.AppImage \
+            "https://github.com/ayman708-UX/PlayTorrioPlayerV2/releases/download/v1.8.27/PlayTorrio-Linux-x64.AppImage"
           
-          # Extract
-          cd PlayTorrioPlayer
-          tar -xzf player.tar.gz
-          rm -f player.tar.gz
+          # Make AppImage executable
+          chmod +x PlayTorrioPlayer/PlayTorrio-Linux-x64.AppImage
           
-          # Check for AppImage in root or nested folder, or binary in bundle folder
-          APPIMAGE_ROOT=$(find . -maxdepth 1 -name "*.AppImage" | head -1)
-          NESTED_FOLDER=$(find . -maxdepth 1 -type d ! -name "." | head -1)
-          BUNDLE_BINARY=""
-          
-          # Check for bundle folder binary
-          if [ -d "bundle" ]; then
-            BUNDLE_BINARY=$(find bundle -maxdepth 1 -type f \( -name "playtorrio" -o -name "PlayTorrio" -o -name "NipaPlay" \) | head -1)
-          elif [ -n "$NESTED_FOLDER" ] && [ -d "$NESTED_FOLDER/bundle" ]; then
-            BUNDLE_BINARY=$(find "$NESTED_FOLDER/bundle" -maxdepth 1 -type f \( -name "playtorrio" -o -name "PlayTorrio" -o -name "NipaPlay" \) | head -1)
-          fi
-          
-          if [ -n "$APPIMAGE_ROOT" ]; then
-            echo "✓ AppImage found in root: $APPIMAGE_ROOT"
-            chmod +x "$APPIMAGE_ROOT"
-          elif [ -n "$BUNDLE_BINARY" ]; then
-            echo "✓ Bundle binary found: $BUNDLE_BINARY"
-            chmod +x "$BUNDLE_BINARY"
-            # Don't flatten if bundle structure exists
-          elif [ -n "$NESTED_FOLDER" ]; then
-            echo "Found nested folder: $NESTED_FOLDER"
-            APPIMAGE_NESTED=$(find "$NESTED_FOLDER" -maxdepth 1 -name "*.AppImage" | head -1)
-            if [ -n "$APPIMAGE_NESTED" ]; then
-              echo "Flattening structure..."
-              mv "$NESTED_FOLDER"/* . 2>/dev/null || true
-              rm -rf "$NESTED_FOLDER"
-              echo "✓ Structure flattened"
-            fi
-          fi
-          
-          # Set executable permissions for all AppImages and bundle binaries
-          find . -maxdepth 2 -name "*.AppImage" -exec chmod +x {} \;
-          find . -path "*/bundle/*" -type f \( -name "playtorrio" -o -name "PlayTorrio" -o -name "NipaPlay" \) -exec chmod +x {} \;
-          cd ..
-          
-          # Final verification
-          FOUND=false
-          APPIMAGE=$(find PlayTorrioPlayer -maxdepth 1 -name "*.AppImage" | head -1)
-          BUNDLE_BIN=$(find PlayTorrioPlayer -path "*/bundle/*" -type f \( -name "playtorrio" -o -name "PlayTorrio" -o -name "NipaPlay" \) | head -1)
-          
-          if [ -n "$APPIMAGE" ] && [ -f "$APPIMAGE" ]; then
+          # Verify AppImage exists
+          if [ -f PlayTorrioPlayer/PlayTorrio-Linux-x64.AppImage ]; then
             echo "✓ PlayTorrioPlayer AppImage ready - App will be able to launch it"
-            FOUND=true
-          elif [ -n "$BUNDLE_BIN" ] && [ -f "$BUNDLE_BIN" ]; then
-            echo "✓ PlayTorrioPlayer bundle binary ready - App will be able to launch it"
-            FOUND=true
-          fi
-          
-          if [ "$FOUND" = true ]; then
             ls -la PlayTorrioPlayer/
           else
-            echo "❌ PlayTorrioPlayer NOT FOUND!"
+            echo "❌ PlayTorrioPlayer AppImage NOT FOUND!"
             echo "Directory contents:"
             find PlayTorrioPlayer -type f
             exit 1
@@ -250,24 +202,12 @@ jobs:
       - name: Verify PlayTorrioPlayer can be found by app (Linux)
         run: |
           echo "=== PlayTorrioPlayer Verification ==="
-          echo "Checking multiple possible locations..."
+          echo "Checking for AppImage..."
           echo ""
           
-          # Check for AppImage in root or nested folder, or binary in bundle folder
-          APPIMAGE_ROOT=$(find PlayTorrioPlayer -maxdepth 1 -name "*.AppImage" 2>/dev/null | head -1)
-          APPIMAGE_NESTED=$(find PlayTorrioPlayer/PlayTorrio-Linux-x64 -maxdepth 1 -name "*.AppImage" 2>/dev/null | head -1)
-          BUNDLE_BIN=$(find PlayTorrioPlayer -path "*/bundle/*" -type f \( -name "playtorrio" -o -name "PlayTorrio" -o -name "NipaPlay" \) 2>/dev/null | head -1)
+          PLAYER="PlayTorrioPlayer/PlayTorrio-Linux-x64.AppImage"
           
-          PLAYER=""
-          if [ -n "$APPIMAGE_ROOT" ] && [ -f "$APPIMAGE_ROOT" ]; then
-            PLAYER="$APPIMAGE_ROOT"
-          elif [ -n "$APPIMAGE_NESTED" ] && [ -f "$APPIMAGE_NESTED" ]; then
-            PLAYER="$APPIMAGE_NESTED"
-          elif [ -n "$BUNDLE_BIN" ] && [ -f "$BUNDLE_BIN" ]; then
-            PLAYER="$BUNDLE_BIN"
-          fi
-          
-          if [ -n "$PLAYER" ]; then
+          if [ -f "$PLAYER" ]; then
             echo "✓ FOUND: $PLAYER"
             echo "  Size: $(du -h "$PLAYER" | cut -f1)"
             echo "  Executable: $(test -x "$PLAYER" && echo 'Yes' || echo 'No')"
@@ -275,7 +215,7 @@ jobs:
             echo "✓ App will successfully find and launch PlayTorrioPlayer"
             exit 0
           else
-            echo "❌ NO player found!"
+            echo "❌ AppImage not found!"
             echo ""
             echo "Contents of PlayTorrioPlayer folder:"
             ls -laR PlayTorrioPlayer/
@@ -336,7 +276,7 @@ jobs:
           
           # Download macOS Universal version from V2
           curl -L -o PlayTorrioPlayer/player.zip \
-            "https://github.com/ayman708-UX/PlayTorrioPlayerV2/releases/download/v1.8.19/PlayTorrio-macOS-Universal.zip"
+            "https://github.com/ayman708-UX/PlayTorrioPlayerV2/releases/download/v1.8.27/PlayTorrio-macOS-Universal.zip"
           
           # Extract
           cd PlayTorrioPlayer
@@ -454,7 +394,7 @@ jobs:
           
           # Download macOS Universal version from V2
           curl -L -o PlayTorrioPlayer/player.zip \
-            "https://github.com/ayman708-UX/PlayTorrioPlayerV2/releases/download/v1.8.19/PlayTorrio-macOS-Universal.zip"
+            "https://github.com/ayman708-UX/PlayTorrioPlayerV2/releases/download/v1.8.27/PlayTorrio-macOS-Universal.zip"
           
           # Extract
           cd PlayTorrioPlayer

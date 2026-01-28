@@ -15,9 +15,9 @@ const { execSync } = require('child_process');
 const PLAYER_DIR = path.join(__dirname, 'PlayTorrioPlayer');
 
 const DOWNLOAD_URLS = {
-    win32: 'https://github.com/ayman708-UX/PlayTorrioPlayer/releases/download/continuous/PlayTorrioPlayer-win64-portable-continuous-7-g2a16754.zip',
-    darwin: 'https://github.com/ayman708-UX/PlayTorrioPlayer/releases/download/continuous/PlayTorrioPlayer-macOS-portable-continuous-7-g2a16754.zip',
-    linux: 'https://github.com/ayman708-UX/PlayTorrioPlayer/releases/download/continuous/PlayTorrioPlayer-linux-portable-continuous-7-g2a16754.AppImage'
+    win32: 'https://github.com/ayman708-UX/PlayTorrioPlayerV2/releases/download/v1.8.27/PlayTorrio-Windows-x64.zip',
+    darwin: 'https://github.com/ayman708-UX/PlayTorrioPlayerV2/releases/download/v1.8.27/PlayTorrio-macOS-Universal.zip',
+    linux: 'https://github.com/ayman708-UX/PlayTorrioPlayerV2/releases/download/v1.8.27/PlayTorrio-Linux-x64.AppImage'
 };
 
 function downloadFile(url, destPath) {
@@ -177,13 +177,20 @@ function verifyInstallation() {
         }
     } else {
         // Linux - check for AppImage first
-        try {
-            const files = fs.readdirSync(PLAYER_DIR);
-            const appImage = files.find(f => f.endsWith('.AppImage') && f.includes('PlayTorrioPlayer'));
-            if (appImage) {
-                playerExe = path.join(PLAYER_DIR, appImage);
-            }
-        } catch {}
+        // Check for specific AppImage name from v1.8.27 release
+        const specificAppImage = path.join(PLAYER_DIR, 'PlayTorrio-Linux-x64.AppImage');
+        if (fs.existsSync(specificAppImage)) {
+            playerExe = specificAppImage;
+        } else {
+            // Fall back to searching for any AppImage
+            try {
+                const files = fs.readdirSync(PLAYER_DIR);
+                const appImage = files.find(f => f.endsWith('.AppImage') && (f.includes('PlayTorrio') || f.includes('PlayTorrioPlayer')));
+                if (appImage) {
+                    playerExe = path.join(PLAYER_DIR, appImage);
+                }
+            } catch {}
+        }
         
         if (!playerExe) {
             const possiblePaths = [
