@@ -6344,6 +6344,7 @@ function registerMusicApi(app) {
         res.setHeader('Accept-Ranges', 'bytes');
         res.setHeader('Cache-Control', 'public, max-age=3600');
         res.setHeader('Access-Control-Allow-Origin', '*');
+        res.setHeader('Connection', 'keep-alive');
         
         if (proxyRes.headers['content-length']) {
           res.setHeader('Content-Length', proxyRes.headers['content-length']);
@@ -6356,14 +6357,20 @@ function registerMusicApi(app) {
           res.status(proxyRes.statusCode || 200);
         }
         
-        // Pipe the stream
-        proxyRes.pipe(res);
+        // Pipe the stream with proper error handling
+        proxyRes.pipe(res, { end: true });
         
         proxyRes.on('error', (err) => {
           console.error('[YT Proxy] Stream error:', err.message);
           if (!res.headersSent) {
             res.status(500).send('Stream error');
+          } else {
+            res.end();
           }
+        });
+        
+        proxyRes.on('end', () => {
+          console.log('[YT Proxy] Stream completed successfully');
         });
       });
       
@@ -6441,7 +6448,13 @@ function registerMusicApi(app) {
           url: streamUrl,
           headers: headers,
           responseType: 'stream',
-          timeout: 30000,
+          timeout: 0, // No timeout - let the stream run as long as needed
+          maxContentLength: Infinity,
+          maxBodyLength: Infinity,
+          maxRedirects: 5,
+          decompress: false, // Don't decompress, let the client handle it
+          httpAgent: new (require('http').Agent)({ keepAlive: true, keepAliveMsecs: 30000 }),
+          httpsAgent: new (require('https').Agent)({ keepAlive: true, keepAliveMsecs: 30000 }),
           validateStatus: (status) => status === 200 || status === 206 || status === 416
         });
         
@@ -6459,9 +6472,11 @@ function registerMusicApi(app) {
         res.setHeader('Content-Type', response.headers['content-type'] || 'audio/webm');
         res.setHeader('Accept-Ranges', 'bytes');
         res.setHeader('Cache-Control', 'no-cache');
+        res.setHeader('Connection', 'keep-alive');
         
         if (response.headers['content-length']) {
           res.setHeader('Content-Length', response.headers['content-length']);
+          console.log('[Proxy] Total content length:', response.headers['content-length'], 'bytes');
         }
         
         if (response.headers['content-range']) {
@@ -6470,17 +6485,38 @@ function registerMusicApi(app) {
           console.log('[Proxy] Serving partial:', response.headers['content-range']);
         } else {
           res.status(200);
+          console.log('[Proxy] Serving full stream');
         }
         
-        response.data.pipe(res);
-        
-        response.data.on('error', (err) => {
-          console.error('[Proxy] Stream error:', err.message);
-          if (!res.headersSent) res.status(500).send('Stream error');
+        // Track bytes transferred for debugging
+        let bytesTransferred = 0;
+        response.data.on('data', (chunk) => {
+          bytesTransferred += chunk.length;
         });
         
+        // Pipe with error handling
+        response.data.pipe(res, { end: true });
+        
+        response.data.on('error', (err) => {
+          console.error('[Proxy] Stream error after', bytesTransferred, 'bytes:', err.message);
+          if (!res.headersSent) {
+            res.status(500).send('Stream error');
+          } else {
+            res.end();
+          }
+        });
+        
+        // Clean up on client disconnect
         req.on('close', () => {
-          response.data.destroy();
+          console.log('[Proxy] Client disconnected after', bytesTransferred, 'bytes');
+          if (response.data && !response.data.destroyed) {
+            response.data.destroy();
+          }
+        });
+        
+        // Handle response end
+        response.data.on('end', () => {
+          console.log('[Proxy] Stream completed successfully -', bytesTransferred, 'bytes transferred');
         });
         
         return; // Success
